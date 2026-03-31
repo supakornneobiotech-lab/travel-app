@@ -269,14 +269,11 @@ async function addRow() {
 
   try {
     const { distKm, polyline, dirResult } = await fetchRouteWithDetour(from, to);
-    const { distKm: distKmBack, polyline: polylineBack } = await fetchRouteWithDetour(to, from);
-    const totalKm = parseFloat((distKm + distKmBack).toFixed(1));
     const rate = parseFloat(document.getElementById('rate-default').value);
     const mapImgGo = captureStaticMap(polyline, from, to);
-    const mapImgBack = captureStaticMap(polylineBack, to, from);
-    rows.push({ date, purpose, from, to, km: totalKm, oneWay: distKm, rate, mapImgGo, mapImgBack, dirResult });
+    rows.push({ date, purpose, from, to, km: distKm, rate, mapImgGo, dirResult });
     ['in-date','in-purpose','in-from','in-to'].forEach(id => document.getElementById(id).value = '');
-    status.innerHTML = `✓ ไป ${distKm} กม. + กลับ ${distKm} กม. = รวม ${totalKm} กม.`;
+    status.innerHTML = `✓ ${distKm} กม.`;
     renderTable();
   } catch (e) {
     status.innerHTML = `<span style="color:#e74c3c">ผิดพลาด: ${e.message}</span>`;
@@ -324,11 +321,9 @@ function renderTable() {
   rows.forEach((r, i) => {
     const amt = r.km * r.rate;
     const tr = document.createElement('tr');
-    const mapCell = `
-      <div style="display:flex;gap:4px;align-items:center">
-        ${r.mapImgGo ? `<img src="${r.mapImgGo}" class="map-thumb" onclick="showMap(${i})" title="ขาไป">` : ''}
-        ${r.mapImgBack ? `<img src="${r.mapImgBack}" class="map-thumb" title="ขากลับ">` : ''}
-      </div>`;
+    const mapCell = r.mapImgGo
+      ? `<img src="${r.mapImgGo}" class="map-thumb" onclick="showMap(${i})" title="ดูแผนที่">`
+      : `<button class="sm" onclick="showMap(${i})">ดูแผนที่</button>`;
     tr.innerHTML = `
       <td>${i + 1}</td>
       <td style="white-space:nowrap">${fmt(r.date)}</td>
@@ -422,45 +417,39 @@ async function exportDoc() {
     alignment: AlignmentType.CENTER, spacing: { after: 400 }
   }));
 
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    if (i > 0) children.push(new Paragraph({ children: [new PageBreak()] }));
+  // จัดกลุ่มตามวันที่
+  const grouped = {};
+  rows.forEach(r => {
+    if (!grouped[r.date]) grouped[r.date] = [];
+    grouped[r.date].push(r);
+  });
+
+  const dates = Object.keys(grouped).sort();
+  for (let di = 0; di < dates.length; di++) {
+    const date = dates[di];
+    const dayRows = grouped[date];
+    if (di > 0) children.push(new Paragraph({ children: [new PageBreak()] }));
+
+    // หัววัน
     children.push(new Paragraph({
-      children: [new TextRun({ text: r.purpose || r.to, bold: true, size: 28 })],
-      spacing: { after: 100 }
-    }));
-    children.push(new Paragraph({
-      children: [new TextRun({ text: `${fmt(r.date)}   |   ${r.from} → ${r.to}   |   ${r.km.toFixed(1)} กม.`, size: 22, color: '555555' })],
-      spacing: { after: 200 }
+      children: [new TextRun({ text: fmt(date), bold: true, size: 26 })],
+      spacing: { after: 120 }
     }));
 
-
-    // รูปขาไป
-    if (r.mapImgGo) {
-      try {
-        children.push(new Paragraph({ children: [new TextRun({ text: `ขาไป: ${r.from} → ${r.to}`, bold: true, size: 22 })], spacing: { after: 80 } }));
-        const resp = await fetch(r.mapImgGo);
-        const buf = await resp.arrayBuffer();
-        children.push(new Paragraph({ children: [new ImageRun({ data: buf, transformation: { width: 480, height: 300 }, type: 'png' })], spacing: { after: 160 } }));
-      } catch(e) {
-        children.push(new Paragraph({ children: [new TextRun({ text: `[แผนที่ขาไป: ${r.from} → ${r.to}]`, size: 20, color: '999999', italics: true })] }));
+    for (const r of dayRows) {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: `${r.purpose || r.to}   |   ${r.from} → ${r.to}   |   ${r.km.toFixed(1)} กม.`, size: 20, color: '555555' })],
+        spacing: { after: 120 }
+      }));
+      if (r.mapImgGo) {
+        try {
+          const resp = await fetch(r.mapImgGo);
+          const buf = await resp.arrayBuffer();
+          children.push(new Paragraph({ children: [new ImageRun({ data: buf, transformation: { width: 460, height: 280 }, type: 'png' })], spacing: { after: 160 } }));
+        } catch(e) {
+          children.push(new Paragraph({ children: [new TextRun({ text: `[แผนที่: ${r.from} → ${r.to}]`, size: 20, color: '999999', italics: true })] }));
+        }
       }
-    }
-
-    // รูปขากลับ
-    if (r.mapImgBack) {
-      try {
-        children.push(new Paragraph({ children: [new TextRun({ text: `ขากลับ: ${r.to} → ${r.from}`, bold: true, size: 22 })], spacing: { after: 80 } }));
-        const resp2 = await fetch(r.mapImgBack);
-        const buf2 = await resp2.arrayBuffer();
-        children.push(new Paragraph({ children: [new ImageRun({ data: buf2, transformation: { width: 480, height: 300 }, type: 'png' })], spacing: { after: 200 } }));
-      } catch(e) {
-        children.push(new Paragraph({ children: [new TextRun({ text: `[แผนที่ขากลับ: ${r.to} → ${r.from}]`, size: 20, color: '999999', italics: true })] }));
-      }
-    }
-
-    if (!r.mapImgGo && !r.mapImgBack) {
-      children.push(new Paragraph({ children: [new TextRun({ text: '[ ไม่มีแผนที่ ]', size: 20, color: '999999', italics: true })] }));
     }
   }
 

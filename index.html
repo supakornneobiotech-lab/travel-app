@@ -269,10 +269,12 @@ async function addRow() {
 
   try {
     const { distKm, polyline, dirResult } = await fetchRouteWithDetour(from, to);
-    const totalKm = parseFloat((distKm * 2).toFixed(1));
+    const { distKm: distKmBack, polyline: polylineBack } = await fetchRouteWithDetour(to, from);
+    const totalKm = parseFloat((distKm + distKmBack).toFixed(1));
     const rate = parseFloat(document.getElementById('rate-default').value);
-    const mapImgUrl = captureStaticMap(polyline, from, to);
-    rows.push({ date, purpose, from, to, km: totalKm, oneWay: distKm, rate, mapImg: mapImgUrl, dirResult });
+    const mapImgGo = captureStaticMap(polyline, from, to);
+    const mapImgBack = captureStaticMap(polylineBack, to, from);
+    rows.push({ date, purpose, from, to, km: totalKm, oneWay: distKm, rate, mapImgGo, mapImgBack, dirResult });
     ['in-date','in-purpose','in-from','in-to'].forEach(id => document.getElementById(id).value = '');
     status.innerHTML = `✓ ไป ${distKm} กม. + กลับ ${distKm} กม. = รวม ${totalKm} กม.`;
     renderTable();
@@ -321,9 +323,11 @@ function renderTable() {
   rows.forEach((r, i) => {
     const amt = r.km * r.rate;
     const tr = document.createElement('tr');
-    const mapCell = r.mapImg
-      ? `<img src="${r.mapImg}" class="map-thumb" onclick="showMap(${i})" title="คลิกดูแผนที่">`
-      : `<button class="sm" onclick="showMap(${i})">ดูแผนที่</button>`;
+    const mapCell = `
+      <div style="display:flex;gap:4px;align-items:center">
+        ${r.mapImgGo ? `<img src="${r.mapImgGo}" class="map-thumb" onclick="showMap(${i})" title="ขาไป">` : ''}
+        ${r.mapImgBack ? `<img src="${r.mapImgBack}" class="map-thumb" title="ขากลับ">` : ''}
+      </div>`;
     tr.innerHTML = `
       <td>${i + 1}</td>
       <td style="white-space:nowrap">${fmt(r.date)}</td>
@@ -429,25 +433,33 @@ async function exportDoc() {
       spacing: { after: 200 }
     }));
 
-    // ดึงภาพแผนที่จาก Static Maps API
-    if (r.mapImg) {
+
+    // รูปขาไป
+    if (r.mapImgGo) {
       try {
-        const resp = await fetch(r.mapImg);
-        const blob = await resp.blob();
-        const buf = await blob.arrayBuffer();
-        children.push(new Paragraph({
-          children: [new ImageRun({ data: buf, transformation: { width: 480, height: 320 }, type: 'png' })],
-          spacing: { after: 200 }
-        }));
+        children.push(new Paragraph({ children: [new TextRun({ text: `ขาไป: ${r.from} → ${r.to}`, bold: true, size: 22 })], spacing: { after: 80 } }));
+        const resp = await fetch(r.mapImgGo);
+        const buf = await resp.arrayBuffer();
+        children.push(new Paragraph({ children: [new ImageRun({ data: buf, transformation: { width: 480, height: 300 }, type: 'png' })], spacing: { after: 160 } }));
       } catch(e) {
-        children.push(new Paragraph({
-          children: [new TextRun({ text: `[แผนที่: ${r.from} → ${r.to}]`, size: 20, color: '999999', italics: true })]
-        }));
+        children.push(new Paragraph({ children: [new TextRun({ text: `[แผนที่ขาไป: ${r.from} → ${r.to}]`, size: 20, color: '999999', italics: true })] }));
       }
-    } else {
-      children.push(new Paragraph({
-        children: [new TextRun({ text: '[ ไม่มีแผนที่ ]', size: 20, color: '999999', italics: true })]
-      }));
+    }
+
+    // รูปขากลับ
+    if (r.mapImgBack) {
+      try {
+        children.push(new Paragraph({ children: [new TextRun({ text: `ขากลับ: ${r.to} → ${r.from}`, bold: true, size: 22 })], spacing: { after: 80 } }));
+        const resp2 = await fetch(r.mapImgBack);
+        const buf2 = await resp2.arrayBuffer();
+        children.push(new Paragraph({ children: [new ImageRun({ data: buf2, transformation: { width: 480, height: 300 }, type: 'png' })], spacing: { after: 200 } }));
+      } catch(e) {
+        children.push(new Paragraph({ children: [new TextRun({ text: `[แผนที่ขากลับ: ${r.to} → ${r.from}]`, size: 20, color: '999999', italics: true })] }));
+      }
+    }
+
+    if (!r.mapImgGo && !r.mapImgBack) {
+      children.push(new Paragraph({ children: [new TextRun({ text: '[ ไม่มีแผนที่ ]', size: 20, color: '999999', italics: true })] }));
     }
   }
 

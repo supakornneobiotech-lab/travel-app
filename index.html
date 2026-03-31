@@ -220,20 +220,52 @@ async function calcRouteAPI(originAddr, destAddr, waypointLatLng) {
 
 async function fetchRouteWithDetour(fromAddr, toAddr) {
   const [fromLatLng, toLatLng] = await Promise.all([geocode(fromAddr), geocode(toAddr)]);
-  const longest = await calcRouteAPI(fromAddr, toAddr, null);
-  // บวกเพิ่ม 2 กม. สำหรับระยะอ้อม
-  const distKm = parseFloat((longest.distKm + 2).toFixed(1));
-  // คำนวณ waypoint สำหรับลิงก์ Maps
+  const direct = await calcRouteAPI(fromAddr, toAddr, null);
+  const baseDist = direct.distKm;
+
+  // ทดสอบ offset หลายค่าเพื่อหาที่บวก 1.8-2.2 กม.
+  const offsets = [0.005, 0.008, 0.01, 0.013, 0.016, 0.02, 0.025];
   const midLat = (fromLatLng.lat() + toLatLng.lat()) / 2;
   const midLng = (fromLatLng.lng() + toLatLng.lng()) / 2;
   const dLat = toLatLng.lat() - fromLatLng.lat();
   const dLng = toLatLng.lng() - fromLatLng.lng();
   const len = Math.sqrt(dLat * dLat + dLng * dLng) || 1;
-  const offset = 0.009;
-  const waypointLat = (midLat + (-dLng / len) * offset).toFixed(6);
-  const waypointLng = (midLng + (dLat / len) * offset).toFixed(6);
+
+  let bestRoute = direct;
+  let bestWpLat = null;
+  let bestWpLng = null;
+
+  for (const offset of offsets) {
+    const wpLat = midLat + (-dLng / len) * offset;
+    const wpLng = midLng + (dLat / len) * offset;
+    try {
+      const wp = new google.maps.LatLng(wpLat, wpLng);
+      const detour = await calcRouteAPI(fromAddr, toAddr, wp);
+      const added = detour.distKm - baseDist;
+      if (added >= 1.8 && added <= 2.2) {
+        bestRoute = detour;
+        bestWpLat = wpLat.toFixed(6);
+        bestWpLng = wpLng.toFixed(6);
+        break;
+      }
+      // เก็บที่ใกล้เป้าหมายที่สุด
+      const prevAdded = bestRoute.distKm - baseDist;
+      if (Math.abs(added - 2) < Math.abs(prevAdded - 2)) {
+        bestRoute = detour;
+        bestWpLat = wpLat.toFixed(6);
+        bestWpLng = wpLng.toFixed(6);
+      }
+    } catch(e) { continue; }
+  }
+
   const dirResult = await getDirectionsForMap(fromAddr, toAddr);
-  return { distKm, polyline: longest.polyline || '', dirResult, waypointLat, waypointLng };
+  return {
+    distKm: bestRoute.distKm,
+    polyline: bestRoute.polyline || direct.polyline || '',
+    dirResult,
+    waypointLat: bestWpLat,
+    waypointLng: bestWpLng
+  };
 }
 
 // หา midpoint แล้วเบี่ยงออก ~1 กม. เพื่อให้ได้เส้นทางยาวขึ้น ~2 กม.

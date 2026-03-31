@@ -89,8 +89,12 @@ tbody tr:hover td { background: #f9f9ff; }
     <div class="row" style="margin-bottom:12px">
       <div class="field"><label>วันที่</label><input type="date" id="in-date" style="width:135px"></div>
       <div class="field"><label>วัตถุประสงค์</label><input type="text" id="in-purpose" placeholder="เช่น TPA" style="width:130px"></div>
-      <div class="field"><label>ต้นทาง</label><input type="text" id="in-from" placeholder="เช่น สีลม กรุงเทพ" style="width:185px"></div>
-      <div class="field"><label>ปลายทาง</label><input type="text" id="in-to" placeholder="เช่น Valia Hotel Bangkok" style="width:185px"></div>
+      <div class="field"><label>ต้นทาง</label><input type="text" id="in-from" placeholder="เช่น สีลม กรุงเทพ" style="width:185px" oninput="updatePreviewLink()"></div>
+      <div class="field"><label>ปลายทาง</label><input type="text" id="in-to" placeholder="เช่น Valia Hotel Bangkok" style="width:185px" oninput="updatePreviewLink()"></div>
+      <div class="field"><label>ระยะทาง (กม.) จาก Maps</label><input type="number" id="in-km" placeholder="เช่น 15.8" step="0.1" min="0" style="width:130px"></div>
+    </div>
+    <div class="row" style="align-items:center;gap:10px;margin-bottom:8px">
+      <span id="preview-link"></span>
     </div>
     <div class="row">
       <button class="primary" id="btn-add" onclick="addRow()">+ เพิ่มรายการ</button>
@@ -288,32 +292,35 @@ function getDirectionsForMap(origin, destination) {
   });
 }
 
+function updatePreviewLink() {
+  const from = document.getElementById('in-from').value.trim();
+  const to = document.getElementById('in-to').value.trim();
+  const el = document.getElementById('preview-link');
+  if (from && to) {
+    const url = `https://www.google.com/maps/dir/${encodeURIComponent(from)}/${encodeURIComponent(to)}`;
+    el.innerHTML = `<a href="${url}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;height:30px;padding:0 12px;background:#1a73e8;color:#fff;border-radius:6px;font-size:12px;text-decoration:none">🗺 เปิด Maps เพื่อดูระยะทาง</a>
+    <span style="font-size:12px;color:#888;margin-left:8px">→ ดูระยะทางใน Maps แล้วกรอกในช่องระยะทาง</span>`;
+  } else {
+    el.innerHTML = '';
+  }
+}
+
 async function addRow() {
-  if (!apiKey) { alert('กรุณาใส่ API Key ก่อนค่ะ'); return; }
-  if (!mapsReady) { alert('Google Maps ยังโหลดไม่เสร็จ กรุณารอสักครู่'); return; }
   const date = document.getElementById('in-date').value;
   const purpose = document.getElementById('in-purpose').value.trim();
   const from = document.getElementById('in-from').value.trim();
   const to = document.getElementById('in-to').value.trim();
+  const km = parseFloat(document.getElementById('in-km').value);
   if (!date || !from || !to) { alert('กรุณากรอกวันที่ ต้นทาง และปลายทาง'); return; }
+  if (!km || km <= 0) { alert('กรุณากรอกระยะทางจาก Google Maps ก่อนค่ะ'); return; }
 
-  const btn = document.getElementById('btn-add');
-  const status = document.getElementById('fetch-status');
-  btn.disabled = true;
-  status.innerHTML = '<span class="spin"></span> กำลังคำนวณเส้นทาง...';
-
-  try {
-    const { distKm, polyline, dirResult, waypointLat, waypointLng } = await fetchRouteWithDetour(from, to);
-    const rate = parseFloat(document.getElementById('rate-default').value);
-    const mapImgGo = captureStaticMap(polyline, from, to);
-    rows.push({ date, purpose, from, to, km: distKm, rate, mapImgGo, dirResult, waypointLat, waypointLng });
-    ['in-date','in-purpose','in-from','in-to'].forEach(id => document.getElementById(id).value = '');
-    status.innerHTML = `✓ ${distKm} กม.`;
-    renderTable();
-  } catch (e) {
-    status.innerHTML = `<span style="color:#e74c3c">ผิดพลาด: ${e.message}</span>`;
-  }
-  btn.disabled = false;
+  const rate = parseFloat(document.getElementById('rate-default').value);
+  const mapsUrl = `https://www.google.com/maps/dir/${encodeURIComponent(from)}/${encodeURIComponent(to)}`;
+  rows.push({ date, purpose, from, to, km, rate, mapsUrl });
+  ['in-date','in-purpose','in-from','in-to','in-km'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('preview-link').innerHTML = '';
+  document.getElementById('fetch-status').innerHTML = `✓ เพิ่มแล้ว ${km} กม.`;
+  renderTable();
 }
 
 function captureStaticMap(polyline, from, to) {
@@ -364,12 +371,7 @@ function renderTable() {
   tbody.innerHTML = '';
   rows.forEach((r, i) => {
     const amt = r.km * r.rate;
-    // สร้าง waypoint กลางทางเพื่อให้ Maps แสดงเส้นทางอ้อม ~2 กม.
-    const midLat = r.waypointLat || '';
-    const midLng = r.waypointLng || '';
-    const mapsUrl = midLat
-      ? `https://www.google.com/maps/dir/${encodeURIComponent(r.from)}/${midLat},${midLng}/${encodeURIComponent(r.to)}`
-      : `https://www.google.com/maps/dir/${encodeURIComponent(r.from)}/${encodeURIComponent(r.to)}`;
+    const mapsUrl = r.mapsUrl || `https://www.google.com/maps/dir/${encodeURIComponent(r.from)}/${encodeURIComponent(r.to)}`;
     const tr = document.createElement('tr');
     // thumbnail หรือช่องอัปโหลด
     let imgCell = '';
@@ -389,7 +391,7 @@ function renderTable() {
       <td style="white-space:nowrap">${fmt(r.date)}</td>
       <td>${r.purpose}</td>
       <td style="font-size:12px;color:#888">${r.from} → ${r.to}</td>
-      <td class="num"><strong>${r.km.toFixed(1)}</strong><span class="tag">ไกลสุด</span></td>
+      <td class="num"><strong>${r.km.toFixed(1)}</strong></td>
       <td class="num">${r.rate}</td>
       <td class="num"><strong>${amt.toFixed(0)}</strong></td>
       <td><a href="${mapsUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;background:#1a73e8;color:#fff;border-radius:6px;font-size:11px;text-decoration:none;white-space:nowrap">🗺 เปิด Maps</a></td>

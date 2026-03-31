@@ -239,9 +239,10 @@ async function fetchRouteWithDetour(fromAddr, toAddr) {
     detour = { distKm: 0, polyline: '' };
   }
   const chosen = detour.distKm > direct.distKm ? detour : direct;
-  // สร้าง dirResult สำหรับแสดงแผนที่
+  // ถ้า polyline ว่าง ใช้ของ direct แทน
+  if (!chosen.polyline && direct.polyline) chosen.polyline = direct.polyline;
   const dirResult = await getDirectionsForMap(fromAddr, toAddr);
-  return { distKm: chosen.distKm, polyline: chosen.polyline, dirResult, fromLatLng, toLatLng };
+  return { distKm: chosen.distKm, polyline: chosen.polyline || '', dirResult, fromLatLng, toLatLng };
 }
 
 function getDirectionsForMap(origin, destination) {
@@ -288,10 +289,11 @@ function captureStaticMap(polyline, from, to) {
   try {
     const origin = encodeURIComponent(from);
     const dest = encodeURIComponent(to);
-    if (polyline) {
-      return `https://maps.googleapis.com/maps/api/staticmap?size=600x400&maptype=roadmap&path=enc:${encodeURIComponent(polyline)}&markers=color:green|label:A|${origin}&markers=color:red|label:B|${dest}&key=${apiKey}`;
+    const base = `https://maps.googleapis.com/maps/api/staticmap?size=600x400&maptype=roadmap&markers=color:green|label:A|${origin}&markers=color:red|label:B|${dest}&key=${apiKey}`;
+    if (polyline && polyline.length > 0) {
+      return base + `&path=enc:${encodeURIComponent(polyline)}`;
     }
-    return `https://maps.googleapis.com/maps/api/staticmap?size=600x400&maptype=roadmap&markers=color:green|label:A|${origin}&markers=color:red|label:B|${dest}&key=${apiKey}`;
+    return base + `&path=color:0x0000ffff|weight:3|${origin}|${dest}`;
   } catch(e) { return null; }
 }
 

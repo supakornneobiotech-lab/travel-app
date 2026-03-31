@@ -193,42 +193,64 @@ function getWaypoint(fromLatLng, toLatLng) {
 
 function geocode(address) {
   return new Promise((resolve, reject) => {
-    new google.maps.Geocoder().geocode({ address }, (results, status) => {
+    new google.maps.Geocoder().geocode({ address, region: 'TH' }, (results, status) => {
       if (status === 'OK') resolve(results[0].geometry.location);
       else reject(new Error(`Geocode failed: ${address}`));
     });
   });
 }
 
-function calcRoute(origin, destination, waypoint) {
-  return new Promise((resolve, reject) => {
-    const svc = new google.maps.DirectionsService();
-    const req = {
-      origin,
-      destination,
-      travelMode: google.maps.TravelMode.DRIVING,
-      region: 'TH'
-    };
-    if (waypoint) req.waypoints = [{ location: waypoint, stopover: false }];
-    svc.route(req, (result, status) => {
-      if (status !== 'OK') { reject(new Error(`Directions: ${status}`)); return; }
-      const dist = result.legs.reduce((s, l) => s + l.distance.value, 0);
-      resolve({ result, distKm: Math.round(dist / 100) / 10 });
-    });
+async function calcRouteAPI(originAddr, destAddr, waypointLatLng) {
+  const body = {
+    origin: { address: originAddr },
+    destination: { address: destAddr },
+    travelMode: 'DRIVE',
+    computeAlternativeRoutes: false,
+    languageCode: 'th',
+    regionCode: 'TH'
+  };
+  if (waypointLatLng) {
+    body.intermediates = [{ location: { latLng: { latitude: waypointLatLng.lat(), longitude: waypointLatLng.lng() } } }];
+  }
+  const res = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': 'routes.distanceMeters,routes.polyline,routes.legs'
+    },
+    body: JSON.stringify(body)
   });
+  const data = await res.json();
+  if (!data.routes || data.routes.length === 0) throw new Error(data.error?.message || 'ไม่พบเส้นทาง');
+  const route = data.routes[0];
+  const distKm = Math.round(route.distanceMeters / 100) / 10;
+  return { distKm, polyline: route.polyline?.encodedPolyline || '' };
 }
 
 async function fetchRouteWithDetour(fromAddr, toAddr) {
-  // geocode ต้นทางและปลายทาง
   const [fromLatLng, toLatLng] = await Promise.all([geocode(fromAddr), geocode(toAddr)]);
-  // ดึงเส้นทางตรง
-  const direct = await calcRoute(fromAddr, toAddr, null);
-  // หา waypoint เบี่ยง แล้วดึงเส้นทางอ้อม
+  const direct = await calcRouteAPI(fromAddr, toAddr, null);
   const wp = getWaypoint(fromLatLng, toLatLng);
-  const detour = await calcRoute(fromAddr, toAddr, wp);
-  // เลือกเส้นทางที่ไกลกว่า
+  let detour;
+  try {
+    detour = await calcRouteAPI(fromAddr, toAddr, wp);
+  } catch(e) {
+    detour = { distKm: 0, polyline: '' };
+  }
   const chosen = detour.distKm > direct.distKm ? detour : direct;
-  return chosen;
+  // สร้าง dirResult สำหรับแสดงแผนที่
+  const dirResult = await getDirectionsForMap(fromAddr, toAddr);
+  return { distKm: chosen.distKm, polyline: chosen.polyline, dirResult, fromLatLng, toLatLng };
+}
+
+function getDirectionsForMap(origin, destination) {
+  return new Promise((resolve) => {
+    const svc = new google.maps.DirectionsService();
+    svc.route({ origin, destination, travelMode: google.maps.TravelMode.DRIVING, region: 'TH' },
+      (result, status) => { resolve(status === 'OK' ? result : null); }
+    );
+  });
 }
 
 async function addRow() {
@@ -246,12 +268,11 @@ async function addRow() {
   status.innerHTML = '<span class="spin"></span> กำลังคำนวณเส้นทาง...';
 
   try {
-    const { result, distKm } = await fetchRouteWithDetour(from, to);
+    const { distKm, polyline, dirResult } = await fetchRouteWithDetour(from, to);
     const totalKm = parseFloat((distKm * 2).toFixed(1));
     const rate = parseFloat(document.getElementById('rate-default').value);
-    // จับภาพแผนที่เป็น static map URL
-    const mapImgUrl = await captureDirectionsMap(result, from, to);
-    rows.push({ date, purpose, from, to, km: totalKm, oneWay: distKm, rate, mapImg: mapImgUrl, dirResult: result });
+    const mapImgUrl = captureStaticMap(polyline, from, to);
+    rows.push({ date, purpose, from, to, km: totalKm, oneWay: distKm, rate, mapImg: mapImgUrl, dirResult });
     ['in-date','in-purpose','in-from','in-to'].forEach(id => document.getElementById(id).value = '');
     status.innerHTML = `✓ ไป ${distKm} กม. + กลับ ${distKm} กม. = รวม ${totalKm} กม.`;
     renderTable();
@@ -261,17 +282,15 @@ async function addRow() {
   btn.disabled = false;
 }
 
-async function captureDirectionsMap(dirResult, from, to) {
-  // ใช้ Static Maps API เพื่อดึงภาพแผนที่
+function captureStaticMap(polyline, from, to) {
   try {
-    const path = dirResult.routes[0].overview_polyline;
     const origin = encodeURIComponent(from);
     const dest = encodeURIComponent(to);
-    const url = `https://maps.googleapis.com/maps/api/staticmap?size=600x400&maptype=roadmap&path=enc:${path}&markers=color:green|label:A|${origin}&markers=color:red|label:B|${dest}&key=${apiKey}`;
-    return url;
-  } catch(e) {
-    return null;
-  }
+    if (polyline) {
+      return `https://maps.googleapis.com/maps/api/staticmap?size=600x400&maptype=roadmap&path=enc:${encodeURIComponent(polyline)}&markers=color:green|label:A|${origin}&markers=color:red|label:B|${dest}&key=${apiKey}`;
+    }
+    return `https://maps.googleapis.com/maps/api/staticmap?size=600x400&maptype=roadmap&markers=color:green|label:A|${origin}&markers=color:red|label:B|${dest}&key=${apiKey}`;
+  } catch(e) { return null; }
 }
 
 function showMap(i) {

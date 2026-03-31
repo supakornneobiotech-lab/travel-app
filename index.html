@@ -395,7 +395,7 @@ function exportExcel() {
   dataRows.push(['Date', 'Purpose', 'Venue', 'Distance', 'Fee', 'Amount']);
   rows.forEach((r, i) => {
     const excelRow = i + 3;
-    dataRows.push([fmt(r.date), r.purpose, r.to, `=${r.oneWay}+${r.oneWay}`, r.rate, `=D${excelRow}*E${excelRow}`]);
+    dataRows.push([fmt(r.date), r.purpose, r.to, r.km, r.rate, `=D${excelRow}*E${excelRow}`]);
   });
   dataRows.push([null, 'Toll Fee', null, null, null, toll > 0 ? toll : null]);
   dataRows.push([null, 'Car Parking', null, null, null, parking > 0 ? parking : null]);

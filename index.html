@@ -194,7 +194,7 @@ async function calcRouteAPI(originAddr, destAddr, waypointLatLng) {
     origin: { address: originAddr },
     destination: { address: destAddr },
     travelMode: 'DRIVE',
-    computeAlternativeRoutes: false,
+    computeAlternativeRoutes: waypointLatLng ? false : true,
     languageCode: 'th',
     regionCode: 'TH'
   };
@@ -212,14 +212,17 @@ async function calcRouteAPI(originAddr, destAddr, waypointLatLng) {
   });
   const data = await res.json();
   if (!data.routes || data.routes.length === 0) throw new Error(data.error?.message || 'ไม่พบเส้นทาง');
-  const route = data.routes[0];
-  const distKm = Math.round(route.distanceMeters / 100) / 10;
-  return { distKm, polyline: route.polyline?.encodedPolyline || '' };
+  // เลือก route ที่ไกลสุด
+  const longest = data.routes.reduce((a, b) => a.distanceMeters > b.distanceMeters ? a : b);
+  const distKm = Math.round(longest.distanceMeters / 100) / 10;
+  return { distKm, polyline: longest.polyline?.encodedPolyline || '' };
 }
 
 async function fetchRouteWithDetour(fromAddr, toAddr) {
   const [fromLatLng, toLatLng] = await Promise.all([geocode(fromAddr), geocode(toAddr)]);
-  const direct = await calcRouteAPI(fromAddr, toAddr, null);
+  // ดึงเส้นทางทั้งหมดแล้วเลือกไกลสุด
+  const longest = await calcRouteAPI(fromAddr, toAddr, null);
+  // อ้อมเพิ่ม ~2 กม.
   const wp = getWaypoint(fromLatLng, toLatLng);
   let detour;
   try {
@@ -227,8 +230,9 @@ async function fetchRouteWithDetour(fromAddr, toAddr) {
   } catch(e) {
     detour = { distKm: 0, polyline: '' };
   }
-  const chosen = detour.distKm > direct.distKm ? detour : direct;
-  if (!chosen.polyline && direct.polyline) chosen.polyline = direct.polyline;
+  // เลือกที่ไกลกว่า (ควรเป็น detour เสมอ)
+  const chosen = detour.distKm > longest.distKm ? detour : longest;
+  if (!chosen.polyline) chosen.polyline = longest.polyline;
   const dirResult = await getDirectionsForMap(fromAddr, toAddr);
   return { distKm: chosen.distKm, polyline: chosen.polyline || '', dirResult };
 }

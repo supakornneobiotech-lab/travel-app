@@ -219,12 +219,21 @@ async function calcRouteAPI(originAddr, destAddr, waypointLatLng) {
 }
 
 async function fetchRouteWithDetour(fromAddr, toAddr) {
-  // ดึงเส้นทางทั้งหมดแล้วเลือกไกลสุด
+  const [fromLatLng, toLatLng] = await Promise.all([geocode(fromAddr), geocode(toAddr)]);
   const longest = await calcRouteAPI(fromAddr, toAddr, null);
   // บวกเพิ่ม 2 กม. สำหรับระยะอ้อม
   const distKm = parseFloat((longest.distKm + 2).toFixed(1));
+  // คำนวณ waypoint สำหรับลิงก์ Maps
+  const midLat = (fromLatLng.lat() + toLatLng.lat()) / 2;
+  const midLng = (fromLatLng.lng() + toLatLng.lng()) / 2;
+  const dLat = toLatLng.lat() - fromLatLng.lat();
+  const dLng = toLatLng.lng() - fromLatLng.lng();
+  const len = Math.sqrt(dLat * dLat + dLng * dLng) || 1;
+  const offset = 0.009;
+  const waypointLat = (midLat + (-dLng / len) * offset).toFixed(6);
+  const waypointLng = (midLng + (dLat / len) * offset).toFixed(6);
   const dirResult = await getDirectionsForMap(fromAddr, toAddr);
-  return { distKm, polyline: longest.polyline || '', dirResult };
+  return { distKm, polyline: longest.polyline || '', dirResult, waypointLat, waypointLng };
 }
 
 // หา midpoint แล้วเบี่ยงออก ~1 กม. เพื่อให้ได้เส้นทางยาวขึ้น ~2 กม.
@@ -262,10 +271,10 @@ async function addRow() {
   status.innerHTML = '<span class="spin"></span> กำลังคำนวณเส้นทาง...';
 
   try {
-    const { distKm, polyline, dirResult } = await fetchRouteWithDetour(from, to);
+    const { distKm, polyline, dirResult, waypointLat, waypointLng } = await fetchRouteWithDetour(from, to);
     const rate = parseFloat(document.getElementById('rate-default').value);
     const mapImgGo = captureStaticMap(polyline, from, to);
-    rows.push({ date, purpose, from, to, km: distKm, rate, mapImgGo, dirResult });
+    rows.push({ date, purpose, from, to, km: distKm, rate, mapImgGo, dirResult, waypointLat, waypointLng });
     ['in-date','in-purpose','in-from','in-to'].forEach(id => document.getElementById(id).value = '');
     status.innerHTML = `✓ ${distKm} กม.`;
     renderTable();
@@ -323,7 +332,12 @@ function renderTable() {
   tbody.innerHTML = '';
   rows.forEach((r, i) => {
     const amt = r.km * r.rate;
-    const mapsUrl = `https://www.google.com/maps/dir/${encodeURIComponent(r.from)}/${encodeURIComponent(r.to)}`;
+    // สร้าง waypoint กลางทางเพื่อให้ Maps แสดงเส้นทางอ้อม ~2 กม.
+    const midLat = r.waypointLat || '';
+    const midLng = r.waypointLng || '';
+    const mapsUrl = midLat
+      ? `https://www.google.com/maps/dir/${encodeURIComponent(r.from)}/${midLat},${midLng}/${encodeURIComponent(r.to)}`
+      : `https://www.google.com/maps/dir/${encodeURIComponent(r.from)}/${encodeURIComponent(r.to)}`;
     const tr = document.createElement('tr');
     // thumbnail หรือช่องอัปโหลด
     let imgCell = '';

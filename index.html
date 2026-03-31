@@ -3,15 +3,201 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>บันทึกการเดินทาง</title>
+<title>Travel Expense System</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+body { font-family: Arial, sans-serif; background:#f5f6fa; padding:20px; }
+.container { max-width:1100px; margin:auto; background:#fff; padding:20px; border-radius:10px; }
+input, select, button { padding:8px; margin:5px; }
+table { width:100%; border-collapse:collapse; margin-top:15px; }
+th, td { border:1px solid #ddd; padding:8px; font-size:13px; }
+th { background:#f0f0f0; }
+.num { text-align:right; }
+</style>
 </head>
 <body>
-<h2>ใช้ไฟล์นี้แทนของเดิมได้เลย (แก้ครบแล้ว)</h2>
-<p>เวอร์ชันนี้:
-- คิดระยะทางขาเดียว
-- Word แยกตามวัน
-- รวมระยะทาง + เงินต่อวัน</p>
-<p>👉 ให้นำไปแทน index.html เดิมใน GitHub ได้เลย</p>
+<div class="container">
+<h2>ระบบบันทึกค่าเดินทาง</h2>
+
+เดือน: <input type="month" id="month">
+ชื่อ: <input type="text" id="emp">
+แผนก: <input type="text" id="dept">
+อัตราน้ำมัน:
+<select id="rate-default">
+<option value="5">5</option>
+<option value="6">6</option>
+</select>
+
+<hr>
+
+วันที่: <input type="date" id="in-date">
+งาน: <input type="text" id="in-purpose">
+จาก: <input type="text" id="in-from">
+ไป: <input type="text" id="in-to">
+<button onclick="addRow()">เพิ่ม</button>
+
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>วันที่</th>
+<th>งาน</th>
+<th>เส้นทาง</th>
+<th>กม.</th>
+<th>Rate</th>
+<th>เงิน</th>
+<th>ลบ</th>
+</tr>
+</thead>
+<tbody id="tbody"></tbody>
+</table>
+
+<br>
+ค่าทางด่วน <input type="number" id="toll" value="0">
+ค่าจอดรถ <input type="number" id="parking" value="0">
+อื่นๆ <input type="number" id="other" value="0">
+
+<h3 id="summary"></h3>
+
+<button onclick="exportExcel()">Export Excel</button>
+<button onclick="exportDoc()">Export Word</button>
+
+</div>
+
+<script>
+let rows = [];
+
+function fmt(d){
+  if(!d) return "";
+  const [y,m,day] = d.split("-");
+  return day + "/" + m + "/" + y;
+}
+
+async function addRow(){
+  const date = document.getElementById('in-date').value;
+  const purpose = document.getElementById('in-purpose').value;
+  const from = document.getElementById('in-from').value;
+  const to = document.getElementById('in-to').value;
+  const rate = parseFloat(document.getElementById('rate-default').value);
+
+  if(!date || !from || !to){ alert("กรอกข้อมูลไม่ครบ"); return; }
+
+  // ใส่ระยะทางเอง (GitHub Pages ใช้ API ยาก)
+  let km = prompt("ใส่ระยะทาง (กม.)");
+  km = parseFloat(km);
+
+  rows.push({date,purpose,from,to,km,rate});
+  renderTable();
+}
+
+function renderTable(){
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+
+  rows.forEach((r,i)=>{
+    const tr = document.createElement("tr");
+    const amt = r.km * r.rate;
+
+    tr.innerHTML = `
+    <td>${i+1}</td>
+    <td>${fmt(r.date)}</td>
+    <td>${r.purpose}</td>
+    <td>${r.from} → ${r.to}</td>
+    <td class="num">${r.km.toFixed(1)}</td>
+    <td class="num">${r.rate}</td>
+    <td class="num">${amt.toFixed(0)}</td>
+    <td><button onclick="removeRow(${i})">ลบ</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  updateSummary();
+}
+
+function removeRow(i){
+  rows.splice(i,1);
+  renderTable();
+}
+
+function updateSummary(){
+  const totalKm = rows.reduce((s,r)=>s+r.km,0);
+  const totalAmt = rows.reduce((s,r)=>s+r.km*r.rate,0);
+  const toll = parseFloat(document.getElementById("toll").value)||0;
+  const parking = parseFloat(document.getElementById("parking").value)||0;
+  const other = parseFloat(document.getElementById("other").value)||0;
+
+  document.getElementById("summary").innerText =
+  `รวม ${totalKm.toFixed(1)} กม | เงิน ${totalAmt} | อื่นๆ ${toll+parking+other} | รวมทั้งหมด ${totalAmt+toll+parking+other}`;
+}
+
+function exportExcel(){
+  if(rows.length===0){ alert("ไม่มีข้อมูล"); return; }
+
+  const wb = XLSX.utils.book_new();
+  const data = [];
+  data.push(["Date","Purpose","From","To","Distance","Rate","Amount"]);
+
+  rows.forEach(r=>{
+    data.push([fmt(r.date),r.purpose,r.from,r.to,r.km,r.rate,r.km*r.rate]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  XLSX.utils.book_append_sheet(wb,ws,"Sheet1");
+  XLSX.writeFile(wb,"Travel.xlsx");
+}
+
+async function exportDoc(){
+  if(rows.length===0){ alert("ไม่มีข้อมูล"); return; }
+
+  if(typeof docx === "undefined"){
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/docx@8.2.2/build/index.umd.js";
+    document.head.appendChild(s);
+    await new Promise(r=>s.onload=r);
+  }
+
+  const { Document, Packer, Paragraph, TextRun, PageBreak } = docx;
+  const children = [];
+
+  // group by date
+  let grouped = {};
+  rows.forEach(r=>{
+    if(!grouped[r.date]) grouped[r.date]=[];
+    grouped[r.date].push(r);
+  });
+
+  for(const date in grouped){
+    children.push(new Paragraph({
+      children:[new TextRun({text:"วันที่ "+fmt(date),bold:true})]
+    }));
+
+    let sumKm=0;
+    let sumAmt=0;
+
+    grouped[date].forEach(r=>{
+      sumKm += r.km;
+      sumAmt += r.km*r.rate;
+
+      children.push(new Paragraph({
+        children:[new TextRun({text:`${r.purpose} ${r.from} → ${r.to} | ${r.km} กม | ${r.km*r.rate} บาท`})]
+      }));
+    });
+
+    children.push(new Paragraph({
+      children:[new TextRun({text:`รวม ${sumKm} กม | ${sumAmt} บาท`,bold:true})]
+    }));
+
+    children.push(new Paragraph({ children:[new PageBreak()] }));
+  }
+
+  const doc = new Document({sections:[{children}]});
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "MAP.docx";
+  a.click();
+}
+</script>
 </body>
 </html>

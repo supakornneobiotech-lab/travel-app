@@ -103,7 +103,7 @@ tbody tr:hover td { background: #f9f9ff; }
       <thead><tr>
         <th>#</th><th>วันที่</th><th>วัตถุประสงค์</th><th>เส้นทาง</th>
         <th class="num">ระยะทาง (กม.)</th><th class="num">อัตรา</th>
-        <th class="num">ค่าใช้จ่าย (฿)</th><th>แผนที่</th><th></th>
+        <th class="num">ค่าใช้จ่าย (฿)</th><th>ลิงก์ Maps</th><th>รูป MAP</th><th></th>
       </tr></thead>
       <tbody id="tbody"></tbody>
     </table>
@@ -307,6 +307,15 @@ function closeModal() {
   document.getElementById('map-modal').classList.remove('open');
 }
 
+function uploadUserImg(i, file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => { rows[i].userImg = e.target.result; renderTable(); };
+  reader.readAsDataURL(file);
+}
+
+function removeUserImg(i) { rows[i].userImg = null; renderTable(); }
+
 function removeRow(i) { rows.splice(i, 1); renderTable(); }
 
 function renderTable() {
@@ -314,10 +323,21 @@ function renderTable() {
   tbody.innerHTML = '';
   rows.forEach((r, i) => {
     const amt = r.km * r.rate;
+    const mapsUrl = `https://www.google.com/maps/dir/${encodeURIComponent(r.from)}/${encodeURIComponent(r.to)}`;
     const tr = document.createElement('tr');
-    const mapCell = r.mapImgGo
-      ? `<img src="${r.mapImgGo}" class="map-thumb" onclick="showMap(${i})" title="ดูแผนที่">`
-      : `<button class="sm" onclick="showMap(${i})">ดูแผนที่</button>`;
+    // thumbnail หรือช่องอัปโหลด
+    let imgCell = '';
+    if (r.userImg) {
+      imgCell = `<div style="display:flex;gap:4px;align-items:center">
+        <img src="${r.userImg}" class="map-thumb">
+        <button class="danger sm" onclick="removeUserImg(${i})">ลบรูป</button>
+      </div>`;
+    } else {
+      imgCell = `<label style="display:flex;flex-direction:column;align-items:center;gap:3px;width:80px;height:55px;border:1.5px dashed #ccc;border-radius:6px;cursor:pointer;font-size:10px;color:#aaa;justify-content:center">
+        <span style="font-size:18px">+</span><span>ใส่รูป</span>
+        <input type="file" accept="image/*" style="display:none" onchange="uploadUserImg(${i},this.files[0])">
+      </label>`;
+    }
     tr.innerHTML = `
       <td>${i + 1}</td>
       <td style="white-space:nowrap">${fmt(r.date)}</td>
@@ -326,7 +346,8 @@ function renderTable() {
       <td class="num"><strong>${r.km.toFixed(1)}</strong><span class="tag">ไกลสุด</span></td>
       <td class="num">${r.rate}</td>
       <td class="num"><strong>${amt.toFixed(0)}</strong></td>
-      <td>${mapCell}</td>
+      <td><a href="${mapsUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;background:#1a73e8;color:#fff;border-radius:6px;font-size:11px;text-decoration:none;white-space:nowrap">🗺 เปิด Maps</a></td>
+      <td>${imgCell}</td>
       <td><button class="danger sm" onclick="removeRow(${i})">ลบ</button></td>
     `;
     tbody.appendChild(tr);
@@ -435,14 +456,19 @@ async function exportDoc() {
         children: [new TextRun({ text: `${r.purpose || r.to}   |   ${r.from} → ${r.to}   |   ${r.km.toFixed(1)} กม.`, size: 20, color: '555555' })],
         spacing: { after: 120 }
       }));
-      if (r.mapImgGo) {
+      if (r.userImg) {
         try {
-          const resp = await fetch(r.mapImgGo);
-          const buf = await resp.arrayBuffer();
-          children.push(new Paragraph({ children: [new ImageRun({ data: buf, transformation: { width: 460, height: 280 }, type: 'png' })], spacing: { after: 160 } }));
+          const base64 = r.userImg.split(',')[1];
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+          const imgType = r.userImg.includes('image/png') ? 'png' : 'jpg';
+          children.push(new Paragraph({ children: [new ImageRun({ data: bytes.buffer, transformation: { width: 460, height: 280 }, type: imgType })], spacing: { after: 160 } }));
         } catch(e) {
           children.push(new Paragraph({ children: [new TextRun({ text: `[แผนที่: ${r.from} → ${r.to}]`, size: 20, color: '999999', italics: true })] }));
         }
+      } else {
+        children.push(new Paragraph({ children: [new TextRun({ text: '[ ยังไม่มีรูป — กด เปิด Maps แล้ว screenshot ใส่ ]', size: 20, color: '999999', italics: true })], spacing: { after: 160 } }));
       }
     }
   }

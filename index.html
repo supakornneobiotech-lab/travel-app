@@ -179,18 +179,6 @@ function fmt(d) {
   return `${day}/${m}/${y}`;
 }
 
-// หา midpoint แล้วเบี่ยงออก ~2.5 กม. เพื่อให้ได้เส้นทางยาวขึ้น ~5 กม.
-function getWaypoint(fromLatLng, toLatLng) {
-  const midLat = (fromLatLng.lat() + toLatLng.lat()) / 2;
-  const midLng = (fromLatLng.lng() + toLatLng.lng()) / 2;
-  // เบี่ยงออกจาก midpoint ตามทิศ perpendicular ~0.025 องศา (~2.8 กม.)
-  const dLat = toLatLng.lat() - fromLatLng.lat();
-  const dLng = toLatLng.lng() - fromLatLng.lng();
-  const len = Math.sqrt(dLat * dLat + dLng * dLng) || 1;
-  const offset = 0.025;
-  return new google.maps.LatLng(midLat + (-dLng / len) * offset, midLng + (dLat / len) * offset);
-}
-
 function geocode(address) {
   return new Promise((resolve, reject) => {
     new google.maps.Geocoder().geocode({ address, region: 'TH' }, (results, status) => {
@@ -199,6 +187,7 @@ function geocode(address) {
     });
   });
 }
+
 
 async function calcRouteAPI(originAddr, destAddr, waypointLatLng) {
   const body = {
@@ -239,10 +228,20 @@ async function fetchRouteWithDetour(fromAddr, toAddr) {
     detour = { distKm: 0, polyline: '' };
   }
   const chosen = detour.distKm > direct.distKm ? detour : direct;
-  // ถ้า polyline ว่าง ใช้ของ direct แทน
   if (!chosen.polyline && direct.polyline) chosen.polyline = direct.polyline;
   const dirResult = await getDirectionsForMap(fromAddr, toAddr);
-  return { distKm: chosen.distKm, polyline: chosen.polyline || '', dirResult, fromLatLng, toLatLng };
+  return { distKm: chosen.distKm, polyline: chosen.polyline || '', dirResult };
+}
+
+// หา midpoint แล้วเบี่ยงออก ~1 กม. เพื่อให้ได้เส้นทางยาวขึ้น ~2 กม.
+function getWaypoint(fromLatLng, toLatLng) {
+  const midLat = (fromLatLng.lat() + toLatLng.lat()) / 2;
+  const midLng = (fromLatLng.lng() + toLatLng.lng()) / 2;
+  const dLat = toLatLng.lat() - fromLatLng.lat();
+  const dLng = toLatLng.lng() - fromLatLng.lng();
+  const len = Math.sqrt(dLat * dLat + dLng * dLng) || 1;
+  const offset = 0.009; // ~1 กม. ได้ระยะเพิ่ม ~2 กม.
+  return new google.maps.LatLng(midLat + (-dLng / len) * offset, midLng + (dLat / len) * offset);
 }
 
 function getDirectionsForMap(origin, destination) {

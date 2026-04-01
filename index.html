@@ -217,10 +217,29 @@ function signOut() {
   });
 }
 
-function showApp() {
+async function initTravellingFolder() {
+  // ค้นหาโฟลเดอร์ Travelling Event
+  const res = await driveRequest(`https://www.googleapis.com/drive/v3/files?q=name='Travelling Event' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)`);
+  const data = await res.json();
+  if (data.files && data.files.length > 0) {
+    folderId = data.files[0].id;
+    folderNameText = 'Travelling Event';
+  } else {
+    // สร้างโฟลเดอร์ใหม่
+    const createRes = await driveRequest('https://www.googleapis.com/drive/v3/files', 'POST',
+      JSON.stringify({ name: 'Travelling Event', mimeType: 'application/vnd.google-apps.folder' }));
+    const created = await createRes.json();
+    folderId = created.id;
+    folderNameText = 'Travelling Event';
+  }
+  document.getElementById('folder-name').textContent = folderNameText;
+}
+
+async function showApp() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('login-bar').style.display = 'flex';
   document.getElementById('app-body').style.display = 'block';
+  await initTravellingFolder();
   const now = new Date();
   document.getElementById('month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   loadMonthData();

@@ -172,27 +172,31 @@ tbody tr:hover td{background:#f9f9ff}
 
 <script>
 const CLIENT_ID = '881983323724-jlnidu3v90rl923gfj5tp63soc222t6u.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.appdata profile email';
+const SCOPES = 'https://www.googleapis.com/auth/drive.file profile email';
+const FOLDER_NAME = 'Travelling Event';
 
 let accessToken = '';
 let userEmail = '';
-let folderId = 'root';
-let folderNameText = 'root (My Drive)';
+let folderId = null;
+let folderNameText = FOLDER_NAME;
 let rows = [];
 let apiKey = '';
 let mapsReady = false;
-let currentMonthFileId = null;
 
 // ==================== AUTH ====================
 function signIn() {
+  document.getElementById('login-status').innerHTML = '<span class="spin"></span> กำลัง login...';
   const client = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: SCOPES,
     callback: async (resp) => {
-      if (resp.error) { document.getElementById('login-status').textContent = 'Login ไม่สำเร็จ: ' + resp.error; return; }
+      if (resp.error) {
+        document.getElementById('login-status').textContent = 'Login ไม่สำเร็จ: ' + resp.error;
+        return;
+      }
       accessToken = resp.access_token;
       await fetchUserInfo();
-      showApp();
+      await showApp();
     }
   });
   client.requestAccessToken();
@@ -210,39 +214,101 @@ async function fetchUserInfo() {
 
 function signOut() {
   google.accounts.oauth2.revoke(accessToken, () => {
-    accessToken = ''; rows = [];
+    accessToken = ''; rows = []; folderId = null;
     document.getElementById('app-body').style.display = 'none';
     document.getElementById('login-bar').style.display = 'none';
     document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('login-status').textContent = '';
   });
-}
-
-async function initTravellingFolder() {
-  // ค้นหาโฟลเดอร์ Travelling Event
-  const res = await driveRequest(`https://www.googleapis.com/drive/v3/files?q=name='Travelling Event' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)`);
-  const data = await res.json();
-  if (data.files && data.files.length > 0) {
-    folderId = data.files[0].id;
-    folderNameText = 'Travelling Event';
-  } else {
-    // สร้างโฟลเดอร์ใหม่
-    const createRes = await driveRequest('https://www.googleapis.com/drive/v3/files', 'POST',
-      JSON.stringify({ name: 'Travelling Event', mimeType: 'application/vnd.google-apps.folder' }));
-    const created = await createRes.json();
-    folderId = created.id;
-    folderNameText = 'Travelling Event';
-  }
-  document.getElementById('folder-name').textContent = folderNameText;
 }
 
 async function showApp() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('login-bar').style.display = 'flex';
   document.getElementById('app-body').style.display = 'block';
+
+  // สร้าง/หาโฟลเดอร์ Travelling Event
   await initTravellingFolder();
+
+  // โหลดเดือนล่าสุดที่ใช้งาน หรือเดือนปัจจุบัน
+  const lastMonth = await getLastUsedMonth();
   const now = new Date();
-  document.getElementById('month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  loadMonthData();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  document.getElementById('month').value = lastMonth || currentMonth;
+  await loadMonthData();
+}
+
+async function initTravellingFolder() {
+  try {
+    // ค้นหาโฟลเดอร์ก่อน
+    const searchRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    const searchData = await searchRes.json();
+
+    if (searchData.files && searchData.files.length > 0) {
+      folderId = searchData.files[0].id;
+    } else {
+      // สร้างโฟลเดอร์ใหม่
+      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ name: FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
+      });
+      const created = await createRes.json();
+      folderId = created.id;
+    }
+    document.getElementById('folder-name').textContent = FOLDER_NAME;
+  } catch(e) {
+    console.error('Folder init error:', e);
+  }
+}
+
+async function getLastUsedMonth() {
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and name='_last_month.txt' and trashed=false&fields=files(id)`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    const data = await res.json();
+    if (data.files && data.files.length > 0) {
+      const fileRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${data.files[0].id}?alt=media`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      return await fileRes.text();
+    }
+  } catch(e) {}
+  return null;
+}
+
+async function saveLastUsedMonth(month) {
+  try {
+    const searchRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and name='_last_month.txt' and trashed=false&fields=files(id)`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    const searchData = await searchRes.json();
+    const fileId = searchData.files && searchData.files.length > 0 ? searchData.files[0].id : null;
+
+    const form = new FormData();
+    const meta = { name: '_last_month.txt', parents: fileId ? undefined : [folderId] };
+    form.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+    form.append('file', new Blob([month], { type: 'text/plain' }));
+
+    const url = fileId
+      ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+      : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+    await fetch(url, {
+      method: fileId ? 'PATCH' : 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form
+    });
+  } catch(e) {}
 }
 
 // ==================== DRIVE ====================
@@ -288,10 +354,11 @@ async function findFile(name) {
 }
 
 async function saveData() {
-  if (!accessToken) return;
+  if (!accessToken || !folderId) return;
   const status = document.getElementById('save-status');
   status.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
   try {
+    const month = document.getElementById('month').value;
     const saveObj = {
       emp: document.getElementById('emp').value,
       dept: document.getElementById('dept').value,
@@ -313,6 +380,8 @@ async function saveData() {
       : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
     const method = fileId ? 'PATCH' : 'POST';
     await fetch(url, { method, headers: { Authorization: `Bearer ${accessToken}` }, body: form });
+    // บันทึกเดือนล่าสุด
+    await saveLastUsedMonth(month);
     status.innerHTML = '✓ บันทึกแล้ว';
     setTimeout(() => status.innerHTML = '', 3000);
   } catch(e) {

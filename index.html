@@ -230,11 +230,36 @@ async function showApp() {
   // สร้าง/หาโฟลเดอร์ Travelling Event
   await initTravellingFolder();
 
-  // โหลดเดือนล่าสุดที่ใช้งาน หรือเดือนปัจจุบัน
-  const lastMonth = await getLastUsedMonth();
+  // โหลดไฟล์ล่าสุดที่แก้ไข
+  await loadLatestFile();
+}
+
+async function loadLatestFile() {
+  try {
+    // ค้นหาไฟล์ JSON ล่าสุดใน Travelling Event folder เรียงตาม modifiedTime
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and mimeType='application/json' and trashed=false&orderBy=modifiedTime desc&pageSize=1&fields=files(id,name)`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    const data = await res.json();
+
+    if (data.files && data.files.length > 0) {
+      const filename = data.files[0].name;
+      // แปลงชื่อไฟล์ travel_emp_yyyy_mm.json → yyyy-mm
+      const parts = filename.replace('.json','').split('_');
+      const yr = parts[parts.length-2];
+      const mo = parts[parts.length-1];
+      if (yr && mo) {
+        document.getElementById('month').value = `${yr}-${mo}`;
+        await loadMonthData();
+        return;
+      }
+    }
+  } catch(e) {}
+
+  // ถ้าไม่มีไฟล์เลย ใช้เดือนปัจจุบัน
   const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  document.getElementById('month').value = lastMonth || currentMonth;
+  document.getElementById('month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   await loadMonthData();
 }
 

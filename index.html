@@ -236,26 +236,25 @@ async function showApp() {
 
 async function loadLatestFile() {
   try {
-    // ค้นหาไฟล์ JSON ล่าสุดใน Travelling Event folder เรียงตาม modifiedTime
     const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and mimeType='application/json' and trashed=false&orderBy=modifiedTime desc&pageSize=1&fields=files(id,name)`,
+      `https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and mimeType='application/json' and trashed=false and name != '_last_month.txt'&orderBy=modifiedTime desc&pageSize=1&fields=files(id,name)`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const data = await res.json();
 
     if (data.files && data.files.length > 0) {
-      const filename = data.files[0].name;
-      // แปลงชื่อไฟล์ travel_emp_yyyy_mm.json → yyyy-mm
-      const parts = filename.replace('.json','').split('_');
-      const yr = parts[parts.length-2];
-      const mo = parts[parts.length-1];
-      if (yr && mo) {
+      const filename = data.files[0].name; // travel_AOF_2026_04.json
+      // แยก yyyy และ mm จากท้ายชื่อไฟล์
+      const match = filename.match(/(\d{4})_(\d{2})\.json$/);
+      if (match) {
+        const yr = match[1];
+        const mo = match[2];
         document.getElementById('month').value = `${yr}-${mo}`;
         await loadMonthData();
         return;
       }
     }
-  } catch(e) {}
+  } catch(e) { console.error('loadLatestFile error:', e); }
 
   // ถ้าไม่มีไฟล์เลย ใช้เดือนปัจจุบัน
   const now = new Date();

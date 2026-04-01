@@ -236,30 +236,45 @@ async function showApp() {
 
 async function loadLatestFile() {
   try {
+    // ค้นหาไฟล์ JSON ล่าสุดใน Travelling Event folder
     const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and mimeType='application/json' and trashed=false and name != '_last_month.txt'&orderBy=modifiedTime desc&pageSize=1&fields=files(id,name)`,
+      `https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and mimeType='application/json' and trashed=false&orderBy=modifiedTime desc&pageSize=1&fields=files(id,name)`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const data = await res.json();
 
     if (data.files && data.files.length > 0) {
-      const filename = data.files[0].name; // travel_AOF_2026_04.json
-      // แยก yyyy และ mm จากท้ายชื่อไฟล์
-      const match = filename.match(/(\d{4})_(\d{2})\.json$/);
+      const file = data.files[0];
+      // แยก yyyy และ mm จากชื่อไฟล์ เช่น travel_AOF_2026_04.json
+      const match = file.name.match(/(\d{4})_(\d{2})\.json$/);
       if (match) {
-        const yr = match[1];
-        const mo = match[2];
-        document.getElementById('month').value = `${yr}-${mo}`;
-        await loadMonthData();
-        return;
+        document.getElementById('month').value = `${match[1]}-${match[2]}`;
       }
+      // โหลดข้อมูลจาก file ID โดยตรง ไม่ต้องค้นหาใหม่
+      const fileRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      const fileData = await fileRes.json();
+      document.getElementById('emp').value = fileData.emp || '';
+      document.getElementById('dept').value = fileData.dept || '';
+      document.getElementById('rate-default').value = fileData.rate || '5';
+      document.getElementById('toll').value = fileData.toll || '';
+      document.getElementById('parking').value = fileData.parking || '';
+      document.getElementById('other').value = fileData.other || '';
+      rows = fileData.rows || [];
+      renderTable();
+      document.getElementById('save-status').innerHTML = '✓ โหลดข้อมูลแล้ว';
+      setTimeout(() => document.getElementById('save-status').innerHTML = '', 3000);
+      return;
     }
   } catch(e) { console.error('loadLatestFile error:', e); }
 
   // ถ้าไม่มีไฟล์เลย ใช้เดือนปัจจุบัน
   const now = new Date();
   document.getElementById('month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  await loadMonthData();
+  rows = [];
+  renderTable();
 }
 
 async function initTravellingFolder() {

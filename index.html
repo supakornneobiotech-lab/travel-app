@@ -123,7 +123,7 @@ tbody tr:hover td{background:#f9f9ff}
   </div>
 
   <div class="card">
-    <h3>เพิ่มรายการเดินทาง</h3>
+    <h3>เพิ่มรายการเดินทาง (รถส่วนตัว)</h3>
     <div class="row" style="margin-bottom:12px">
       <div class="field"><label>วันที่</label><input type="date" id="in-date" style="width:135px"></div>
       <div class="field"><label>วัตถุประสงค์</label><input type="text" id="in-purpose" placeholder="เช่น TPA" style="width:130px"></div>
@@ -138,12 +138,33 @@ tbody tr:hover td{background:#f9f9ff}
     </div>
   </div>
 
+  <div class="card">
+    <h3>เพิ่มรายการ Grab</h3>
+    <div class="row" style="margin-bottom:12px">
+      <div class="field"><label>วันที่</label><input type="date" id="grab-date" style="width:135px"></div>
+      <div class="field"><label>วัตถุประสงค์</label><input type="text" id="grab-purpose" placeholder="เช่น TPA" style="width:130px"></div>
+      <div class="field"><label>ปลายทาง / Venue</label><input type="text" id="grab-venue" placeholder="เช่น Valia Hotel" style="width:185px"></div>
+      <div class="field"><label>ค่า Grab (฿)</label><input type="number" id="grab-amount" placeholder="เช่น 108" min="0" style="width:120px"></div>
+      <div class="field"><label>รูปใบเสร็จ</label>
+        <label style="display:flex;align-items:center;gap:6px;height:38px;padding:0 12px;border:1px solid #ddd;border-radius:8px;cursor:pointer;font-size:13px;color:#555;background:#fafafa">
+          📎 แนบรูป
+          <input type="file" id="grab-img" accept="image/*" style="display:none" onchange="previewGrabImg(this)">
+        </label>
+      </div>
+      <span id="grab-img-preview" style="font-size:12px;color:#4f6ef7;align-self:center"></span>
+    </div>
+    <div class="row">
+      <button class="primary" onclick="addGrabRow()" style="background:#34a853;border-color:#34a853">+ เพิ่ม Grab</button>
+      <span id="grab-status" style="font-size:12px;color:#666"></span>
+    </div>
+  </div>
+
   <div class="card" style="overflow-x:auto">
     <table>
       <thead><tr>
-        <th>#</th><th>วันที่</th><th>วัตถุประสงค์</th><th>เส้นทาง</th>
+        <th>#</th><th>วันที่</th><th>วัตถุประสงค์</th><th>เส้นทาง / Venue</th>
         <th class="num">ระยะทาง (กม.)</th><th class="num">อัตรา</th>
-        <th class="num">ค่าใช้จ่าย (฿)</th><th>ลิงก์ Maps</th><th>รูป MAP</th><th></th>
+        <th class="num">ค่าใช้จ่าย (฿)</th><th>ประเภท</th><th>ลิงก์/รูป</th><th>รูป MAP</th><th></th>
       </tr></thead>
       <tbody id="tbody"></tbody>
     </table>
@@ -506,6 +527,35 @@ function addRow() {
   saveData();
 }
 
+let grabImgData = null;
+
+function previewGrabImg(input) {
+  if (!input.files[0]) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    grabImgData = e.target.result;
+    document.getElementById('grab-img-preview').textContent = '✓ ' + input.files[0].name;
+  };
+  reader.readAsDataURL(input.files[0]);
+}
+
+function addGrabRow() {
+  const date = document.getElementById('grab-date').value;
+  const purpose = document.getElementById('grab-purpose').value.trim();
+  const venue = document.getElementById('grab-venue').value.trim();
+  const amount = parseFloat(document.getElementById('grab-amount').value);
+  if (!date || !venue) { alert('กรุณากรอกวันที่และปลายทาง'); return; }
+  if (!amount || amount <= 0) { alert('กรุณากรอกค่า Grab'); return; }
+  rows.push({ date, purpose, from: '', to: venue, km: null, rate: null, amount, type: 'grab', mapsUrl: null, userImg: grabImgData });
+  ['grab-date','grab-purpose','grab-venue','grab-amount'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('grab-img').value = '';
+  document.getElementById('grab-img-preview').textContent = '';
+  grabImgData = null;
+  document.getElementById('grab-status').textContent = `✓ เพิ่ม Grab ${amount} ฿`;
+  renderTable();
+  saveData();
+}
+
 function uploadUserImg(i, file) {
   if (!file) return;
   const reader = new FileReader();
@@ -520,21 +570,29 @@ function renderTable() {
   const tbody = document.getElementById('tbody');
   tbody.innerHTML = '';
   rows.forEach((r, i) => {
-    const amt = r.km * r.rate;
-    const mapsUrl = r.mapsUrl || `https://www.google.com/maps/dir/${encodeURIComponent(r.from)}/${encodeURIComponent(r.to)}`;
+    const isGrab = r.type === 'grab';
+    const amt = isGrab ? r.amount : r.km * r.rate;
+    const tr = document.createElement('tr');
+    tr.style.background = isGrab ? '#f0fff4' : '';
+
+    const mapsUrl = r.mapsUrl || (r.from && r.to ? `https://www.google.com/maps/dir/${encodeURIComponent(r.from)}/${encodeURIComponent(r.to)}` : null);
+
+    const linkCell = isGrab ? '' : (mapsUrl ? `<a href="${mapsUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;background:#1a73e8;color:#fff;border-radius:6px;font-size:11px;text-decoration:none;white-space:nowrap">🗺 Maps</a>` : '');
+
     let imgCell = r.userImg
       ? `<div style="display:flex;gap:4px;align-items:center"><img src="${r.userImg}" class="map-thumb"><button class="danger sm" onclick="removeUserImg(${i})">ลบ</button></div>`
-      : `<label class="upload-lbl"><span style="font-size:18px">+</span><span>ใส่รูป</span><input type="file" accept="image/*" style="display:none" onchange="uploadUserImg(${i},this.files[0])"></label>`;
-    const tr = document.createElement('tr');
+      : `<label class="upload-lbl"><span style="font-size:18px">+</span><span>${isGrab ? 'ใบเสร็จ' : 'รูป'}</span><input type="file" accept="image/*" style="display:none" onchange="uploadUserImg(${i},this.files[0])"></label>`;
+
     tr.innerHTML = `
       <td>${i+1}</td>
       <td style="white-space:nowrap">${fmt(r.date)}</td>
-      <td>${r.purpose}</td>
-      <td style="font-size:12px;color:#888">${r.from} → ${r.to}</td>
-      <td class="num"><strong>${r.km.toFixed(1)}</strong></td>
-      <td class="num">${r.rate}</td>
+      <td>${r.purpose || ''}</td>
+      <td style="font-size:12px;color:#888">${isGrab ? r.to : (r.from + ' → ' + r.to)}</td>
+      <td class="num">${isGrab ? '-' : `<strong>${r.km.toFixed(1)}</strong>`}</td>
+      <td class="num">${isGrab ? '-' : r.rate}</td>
       <td class="num"><strong>${amt.toFixed(0)}</strong></td>
-      <td><a href="${mapsUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;background:#1a73e8;color:#fff;border-radius:6px;font-size:11px;text-decoration:none;white-space:nowrap">🗺 เปิด Maps</a></td>
+      <td><span style="display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:500;background:${isGrab ? '#e8f5e9' : '#e8f0fe'};color:${isGrab ? '#2e7d32' : '#1a73e8'}">${isGrab ? 'Grab' : 'รถส่วนตัว'}</span></td>
+      <td>${linkCell}</td>
       <td>${imgCell}</td>
       <td><button class="danger sm" onclick="removeRow(${i})">ลบ</button></td>
     `;
@@ -544,12 +602,13 @@ function renderTable() {
 }
 
 function updateSummary() {
-  const totalKm = rows.reduce((s,r) => s+r.km, 0);
-  const fuelAmt = rows.reduce((s,r) => s+r.km*r.rate, 0);
+  const totalKm = rows.filter(r => r.type !== 'grab').reduce((s,r) => s+r.km, 0);
+  const fuelAmt = rows.filter(r => r.type !== 'grab').reduce((s,r) => s+r.km*r.rate, 0);
+  const grabAmt = rows.filter(r => r.type === 'grab').reduce((s,r) => s+r.amount, 0);
   const toll = parseFloat(document.getElementById('toll').value)||0;
   const parking = parseFloat(document.getElementById('parking').value)||0;
   const other = parseFloat(document.getElementById('other').value)||0;
-  const extra = toll+parking+other;
+  const extra = toll+parking+other+grabAmt;
   document.getElementById('s-km').textContent = totalKm.toFixed(1)+' กม.';
   document.getElementById('s-fuel').textContent = '฿'+fuelAmt.toFixed(0);
   document.getElementById('s-extra').textContent = '฿'+extra.toFixed(0);
@@ -580,10 +639,17 @@ function exportExcel() {
   const dataRows = [];
   dataRows.push([`Travelling Expense in ${mNameEng} ${yr}`]);
   dataRows.push(['Date','Purpose','Venue','Distance','Fee','Amount']);
-  rows.forEach((r,i) => {
-    const excelRow = i+3;
-    dataRows.push([fmt(r.date),r.purpose,r.to,r.km,r.rate,`=D${excelRow}*E${excelRow}`]);
+
+  let excelRow = 3;
+  rows.forEach(r => {
+    if (r.type === 'grab') {
+      dataRows.push([fmt(r.date), r.purpose, r.to, '', 'Grab', r.amount]);
+    } else {
+      dataRows.push([fmt(r.date), r.purpose, r.to, r.km, r.rate, `=D${excelRow}*E${excelRow}`]);
+    }
+    excelRow++;
   });
+
   dataRows.push([null,'Toll Fee',null,null,null,toll>0?toll:null]);
   dataRows.push([null,'Car Parking',null,null,null,parking>0?parking:null]);
   if (other>0) dataRows.push([null,'Other',null,null,null,other]);

@@ -236,21 +236,20 @@ async function showApp() {
 
 async function loadLatestFile() {
   try {
-    // ค้นหาไฟล์ JSON ล่าสุดใน Travelling Event folder
+    const q = encodeURIComponent(`'${folderId}' in parents and mimeType='application/json' and trashed=false`);
     const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and mimeType='application/json' and trashed=false&orderBy=modifiedTime desc&pageSize=1&fields=files(id,name)`,
+      `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name)`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const data = await res.json();
+    console.log('loadLatestFile result:', JSON.stringify(data));
 
     if (data.files && data.files.length > 0) {
       const file = data.files[0];
-      // แยก yyyy และ mm จากชื่อไฟล์ เช่น travel_AOF_2026_04.json
       const match = file.name.match(/(\d{4})_(\d{2})\.json$/);
       if (match) {
         document.getElementById('month').value = `${match[1]}-${match[2]}`;
       }
-      // โหลดข้อมูลจาก file ID โดยตรง ไม่ต้องค้นหาใหม่
       const fileRes = await fetch(
         `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -270,7 +269,6 @@ async function loadLatestFile() {
     }
   } catch(e) { console.error('loadLatestFile error:', e); }
 
-  // ถ้าไม่มีไฟล์เลย ใช้เดือนปัจจุบัน
   const now = new Date();
   document.getElementById('month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   rows = [];
@@ -280,8 +278,9 @@ async function loadLatestFile() {
 async function initTravellingFolder() {
   try {
     // ค้นหาโฟลเดอร์ก่อน
+    const q = encodeURIComponent(`name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
     const searchRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)`,
+      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const searchData = await searchRes.json();
@@ -387,7 +386,8 @@ function getFileName() {
 }
 
 async function findFile(name) {
-  const res = await driveRequest(`https://www.googleapis.com/drive/v3/files?q=name='${name}' and '${folderId}' in parents and trashed=false&fields=files(id,name)`);
+  const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
+  const res = await driveRequest(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
   const data = await res.json();
   return data.files && data.files.length > 0 ? data.files[0].id : null;
 }

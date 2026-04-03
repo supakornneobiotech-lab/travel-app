@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>บันทึกการเดินทาง</title>
-<script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -630,6 +629,22 @@ function getMonthNameEng(mo) {
 }
 
 async function exportExcel() {
+  // โหลด ExcelJS ถ้ายังไม่มี
+  if (typeof ExcelJS === 'undefined') {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://unpkg.com/exceljs@4.3.0/dist/exceljs.min.js';
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    }).catch(async () => {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js';
+        s.onload = resolve; s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    });
+  }
   const [yr, mo] = document.getElementById('month').value.split('-');
   const toll = parseFloat(document.getElementById('toll').value)||0;
   const parking = parseFloat(document.getElementById('parking').value)||0;

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>บันทึกการเดินทาง</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -629,67 +629,85 @@ function getMonthNameEng(mo) {
   return ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][parseInt(mo)-1];
 }
 
-function exportExcel() {
+async function exportExcel() {
   const [yr, mo] = document.getElementById('month').value.split('-');
   const toll = parseFloat(document.getElementById('toll').value)||0;
   const parking = parseFloat(document.getElementById('parking').value)||0;
   const other = parseFloat(document.getElementById('other').value)||0;
   const mNameEng = getMonthNameEng(mo);
-  const wb = XLSX.utils.book_new();
-  const dataRows = [];
-  dataRows.push([`Travelling Expense in ${mNameEng} ${yr}`]);
-  dataRows.push(['Date','Purpose','Venue','Distance','Fee','Amount']);
 
-  let excelRow = 3;
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Sheet1');
+  ws.columns = [
+    {width:14},{width:24},{width:26},{width:12},{width:8},{width:12}
+  ];
+
+  // Row 1: Title
+  ws.mergeCells('A1:F1');
+  const titleCell = ws.getCell('A1');
+  titleCell.value = `Travelling Expense in ${mNameEng} ${yr}`;
+  titleCell.font = { bold: true, size: 13 };
+  titleCell.alignment = { horizontal: 'center' };
+
+  // Row 2: Headers
+  const headers = ['Date','Purpose','Venue','Distance','Fee','Amount'];
+  const headerRow = ws.addRow(headers);
+  headerRow.eachCell(cell => {
+    cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FF1F4E79' } };
+    cell.font = { color:{ argb:'FFFFFFFF' }, bold:true };
+    cell.alignment = { horizontal:'center' };
+    cell.border = { bottom:{ style:'thin', color:{ argb:'FFAAAAAA' } } };
+  });
+
+  // Data rows
+  let excelRowNum = 3;
   rows.forEach(r => {
-    if (r.type === 'grab') {
-      dataRows.push([fmt(r.date), r.purpose, r.to, '', 'Grab', r.amount]);
-    } else {
-      dataRows.push([fmt(r.date), r.purpose, r.to, r.km, r.rate, `=D${excelRow}*E${excelRow}`]);
-    }
-    excelRow++;
-  });
-
-  dataRows.push([null,'Toll Fee',null,null,null,toll>0?toll:null]);
-  dataRows.push([null,'Car Parking',null,null,null,parking>0?parking:null]);
-  if (other>0) dataRows.push([null,'Other',null,null,null,other]);
-  const totalRow = dataRows.length+1;
-  dataRows.push(['Total',null,null,null,null,`=SUM(F3:F${totalRow-1})`]);
-
-  const ws = XLSX.utils.aoa_to_sheet(dataRows);
-  ws['!cols'] = [{wch:14},{wch:24},{wch:26},{wch:12},{wch:8},{wch:12}];
-  ws['!merges'] = [{s:{r:0,c:0},e:{r:0,c:5}}];
-
-  // ใส่สีหัวตาราง
-  const headerStyle = { fill: { fgColor: { rgb: '1F4E79' } }, font: { color: { rgb: 'FFFFFF' }, bold: true }, alignment: { horizontal: 'center' } };
-  ['A2','B2','C2','D2','E2','F2'].forEach(cell => {
-    if (!ws[cell]) ws[cell] = { v: '', t: 's' };
-    ws[cell].s = headerStyle;
-  });
-
-  // ใส่สีแถวตามประเภท
-  rows.forEach((r, i) => {
-    const rowNum = i + 3;
     const isGrab = r.type === 'grab';
-    const bgColor = isGrab ? 'E2EFDA' : 'DEEAF1'; // เขียวอ่อน = Grab, ฟ้าอ่อน = รถส่วนตัว
-    ['A','B','C','D','E','F'].forEach(col => {
-      const cell = `${col}${rowNum}`;
-      if (!ws[cell]) ws[cell] = { v: '', t: 's' };
-      ws[cell].s = { fill: { fgColor: { rgb: bgColor } } };
+    const bgColor = isGrab ? 'FFE2EFDA' : 'FFDEEAF1';
+    let rowData;
+    if (isGrab) {
+      rowData = [fmt(r.date), r.purpose||'', r.to, '', 'Grab', r.amount];
+    } else {
+      rowData = [fmt(r.date), r.purpose||'', r.to, r.km, r.rate, { formula: `D${excelRowNum}*E${excelRowNum}` }];
+    }
+    const dataRow = ws.addRow(rowData);
+    dataRow.eachCell({ includeEmpty: true }, cell => {
+      cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: bgColor } };
+      cell.border = { bottom:{ style:'thin', color:{ argb:'FFDDDDDD' } } };
     });
+    excelRowNum++;
   });
 
-  // ใส่สี Total row
-  const totalRowNum = dataRows.length;
-  ['A','B','C','D','E','F'].forEach(col => {
-    const cell = `${col}${totalRowNum}`;
-    if (!ws[cell]) ws[cell] = { v: '', t: 's' };
-    ws[cell].s = { fill: { fgColor: { rgb: '1F4E79' } }, font: { color: { rgb: 'FFFFFF' }, bold: true } };
-  });
+  // Toll / Parking / Other
+  const addExtraRow = (label, val) => {
+    if (!val) return;
+    const r = ws.addRow([null, label, null, null, null, val]);
+    r.getCell(6).numFmt = '#,##0';
+    excelRowNum++;
+  };
+  addExtraRow('Toll Fee', toll > 0 ? toll : null);
+  addExtraRow('Car Parking', parking > 0 ? parking : null);
+  if (other > 0) addExtraRow('Other', other);
 
-  wb['!cellStyles'] = true;
-  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-  XLSX.writeFile(wb, `Travelling_${mNameEng}_${yr}.xlsx`, { cellStyles: true });
+  // Total row
+  const totalRow = ws.addRow(['Total', null, null, null, null, { formula: `SUM(F3:F${excelRowNum-1})` }]);
+  totalRow.eachCell({ includeEmpty: true }, cell => {
+    cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FF1F4E79' } };
+    cell.font = { color:{ argb:'FFFFFFFF' }, bold:true };
+  });
+  totalRow.getCell(6).numFmt = '#,##0';
+
+  // Format number columns
+  ws.getColumn(4).numFmt = '#,##0.0';
+  ws.getColumn(6).numFmt = '#,##0';
+
+  // Export
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `Travelling_${mNameEng}_${yr}.xlsx`; a.click();
+  URL.revokeObjectURL(url);
 }
 
 async function exportDoc() {

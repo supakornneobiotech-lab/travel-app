@@ -655,11 +655,41 @@ function exportExcel() {
   if (other>0) dataRows.push([null,'Other',null,null,null,other]);
   const totalRow = dataRows.length+1;
   dataRows.push(['Total',null,null,null,null,`=SUM(F3:F${totalRow-1})`]);
+
   const ws = XLSX.utils.aoa_to_sheet(dataRows);
   ws['!cols'] = [{wch:14},{wch:24},{wch:26},{wch:12},{wch:8},{wch:12}];
   ws['!merges'] = [{s:{r:0,c:0},e:{r:0,c:5}}];
+
+  // ใส่สีหัวตาราง
+  const headerStyle = { fill: { fgColor: { rgb: '1F4E79' } }, font: { color: { rgb: 'FFFFFF' }, bold: true }, alignment: { horizontal: 'center' } };
+  ['A2','B2','C2','D2','E2','F2'].forEach(cell => {
+    if (!ws[cell]) ws[cell] = { v: '', t: 's' };
+    ws[cell].s = headerStyle;
+  });
+
+  // ใส่สีแถวตามประเภท
+  rows.forEach((r, i) => {
+    const rowNum = i + 3;
+    const isGrab = r.type === 'grab';
+    const bgColor = isGrab ? 'E2EFDA' : 'DEEAF1'; // เขียวอ่อน = Grab, ฟ้าอ่อน = รถส่วนตัว
+    ['A','B','C','D','E','F'].forEach(col => {
+      const cell = `${col}${rowNum}`;
+      if (!ws[cell]) ws[cell] = { v: '', t: 's' };
+      ws[cell].s = { fill: { fgColor: { rgb: bgColor } } };
+    });
+  });
+
+  // ใส่สี Total row
+  const totalRowNum = dataRows.length;
+  ['A','B','C','D','E','F'].forEach(col => {
+    const cell = `${col}${totalRowNum}`;
+    if (!ws[cell]) ws[cell] = { v: '', t: 's' };
+    ws[cell].s = { fill: { fgColor: { rgb: '1F4E79' } }, font: { color: { rgb: 'FFFFFF' }, bold: true } };
+  });
+
+  wb['!cellStyles'] = true;
   XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-  XLSX.writeFile(wb, `Travelling_${mNameEng}_${yr}.xlsx`);
+  XLSX.writeFile(wb, `Travelling_${mNameEng}_${yr}.xlsx`, { cellStyles: true });
 }
 
 async function exportDoc() {

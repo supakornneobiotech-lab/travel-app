@@ -118,7 +118,7 @@ tbody tr:hover td{background:#f9f9ff}
       <div class="field"><label>ชื่อพนักงาน</label><input type="text" id="emp" placeholder="ชื่อ-นามสกุล" style="width:170px"></div>
       <div class="field"><label>แผนก</label><input type="text" id="dept" placeholder="แผนก" style="width:130px"></div>
       <div class="field"><label>อัตราน้ำมัน (บ/กม.)</label>
-        <select id="rate-default" style="width:75px"><option value="5">5</option><option value="6">6</option></select>
+        <input type="number" id="rate-default" min="1" max="10" step="0.5" value="5" style="width:75px">
       </div>
       <button class="primary" onclick="switchMonth()" style="margin-top:4px">📂 โหลดเดือนนี้</button>
       <button class="primary" onclick="saveData()" style="margin-top:4px;background:#2e7d32;border-color:#2e7d32">💾 บันทึก</button>
@@ -139,7 +139,6 @@ tbody tr:hover td{background:#f9f9ff}
       <div class="field"><label>ต้นทาง</label><input type="text" id="in-from" placeholder="เช่น สีลม กรุงเทพ" style="width:185px" oninput="updatePreviewLink()"></div>
       <div class="field"><label>ปลายทาง</label><input type="text" id="in-to" placeholder="เช่น Valia Hotel Bangkok" style="width:185px" oninput="updatePreviewLink()"></div>
       <div class="field"><label>ระยะทาง (กม.) จาก Maps</label><input type="number" id="in-km" placeholder="เช่น 15.8" step="0.1" min="0" style="width:130px"></div>
-      <div class="field"><label>ค่าน้ำมัน (฿) กรอกเองได้</label><input type="number" id="in-fuel-manual" placeholder="ว่าง = คำนวณอัตโนมัติ" step="0.01" min="0" style="width:170px"></div>
     </div>
     <div style="margin-bottom:8px"><span id="preview-link"></span></div>
     <div class="row">
@@ -387,10 +386,15 @@ async function loadMonthData(month) {
   const filename = getFileName(month, emp);
   const status = document.getElementById('save-status');
 
-  // Try to find file with current emp name first, then search all files for that month
+  // ถ้าเปลี่ยนเดือน ให้บันทึกข้อมูลเดือนปัจจุบันก่อน (ป้องกันหาย)
+  if (currentMonth && currentMonth !== month) {
+    await saveData(true); // silent save
+  }
+
+  // Try to find file with current emp name first
   let fileId = await findFile(filename);
 
-  // If not found, search for any travel file with same month (different emp name)
+  // If not found, search for any travel file with same month
   if (!fileId) {
     const [yr, mo] = month.split('-');
     const q = encodeURIComponent(`'${folderId}' in parents and mimeType='application/json' and trashed=false and name contains 'travel_' and name contains '_${yr}_${mo}.json'`);
@@ -403,15 +407,12 @@ async function loadMonthData(month) {
   }
 
   if (!fileId) {
-    // No file for this month — start fresh BUT do NOT clear current data if we haven't confirmed
-    if (currentMonth && currentMonth !== month) {
-      // Switching to a new month: blank slate
-      rows = [];
-      document.getElementById('toll').value = '';
-      document.getElementById('parking').value = '';
-      document.getElementById('other').value = '';
-      renderTable();
-    }
+    // ไม่มีไฟล์เดือนนี้ — เคลียร์ข้อมูล
+    rows = [];
+    document.getElementById('toll').value = '';
+    document.getElementById('parking').value = '';
+    document.getElementById('other').value = '';
+    renderTable();
     currentMonth = month;
     status.innerHTML = '<span style="color:#888">ไม่พบไฟล์สำหรับเดือนนี้ (จะสร้างใหม่เมื่อบันทึก)</span>';
     setTimeout(() => status.innerHTML = '', 3000);
@@ -453,13 +454,14 @@ function refreshChipHighlight() {
   });
 }
 
-async function saveData() {
+async function saveData(silent = false) {
   if (!accessToken || !folderId) return;
-  const month = document.getElementById('month').value;
-  if (!month) { alert('กรุณาเลือกเดือน'); return; }
+  // silent save ใช้ currentMonth (เดือนที่โหลดอยู่) ไม่ใช่ค่าจาก input
+  const month = silent ? currentMonth : document.getElementById('month').value;
+  if (!month) { if (!silent) alert('กรุณาเลือกเดือน'); return; }
 
   const status = document.getElementById('save-status');
-  status.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
+  if (!silent) status.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
 
   try {
     const saveObj = {
@@ -503,12 +505,14 @@ async function saveData() {
     if (!res.ok) throw new Error('Drive API error ' + res.status);
 
     currentMonth = month;
-    status.innerHTML = '✓ บันทึกแล้ว';
-    setTimeout(() => status.innerHTML = '', 3000);
+    if (!silent) {
+      status.innerHTML = '✓ บันทึกแล้ว';
+      setTimeout(() => status.innerHTML = '', 3000);
+    }
     await loadMonthChips();
   } catch(e) {
     console.error('saveData error:', e);
-    status.innerHTML = '<span style="color:#e74c3c">บันทึกไม่สำเร็จ</span>';
+    if (!silent) status.innerHTML = '<span style="color:#e74c3c">บันทึกไม่สำเร็จ</span>';
   }
 }
 
@@ -557,7 +561,6 @@ function addRow() {
   const from = document.getElementById('in-from').value.trim();
   const to = document.getElementById('in-to').value.trim();
   const km = parseFloat(document.getElementById('in-km').value);
-  const fuelManual = document.getElementById('in-fuel-manual').value.trim();
 
   if (!date || !from || !to) { alert('กรุณากรอกวันที่ ต้นทาง และปลายทาง'); return; }
   if (!km || km <= 0) { alert('กรุณากรอกระยะทางจาก Google Maps ก่อนค่ะ'); return; }
@@ -565,15 +568,11 @@ function addRow() {
   const rate = parseFloat(document.getElementById('rate-default').value);
   const mapsUrl = `https://www.google.com/maps/dir/${encodeURIComponent(from)}/${encodeURIComponent(to)}`;
 
-  // fuelManual: if provided, use it; otherwise leave null (computed from km*rate)
-  const fuelOverride = fuelManual !== '' && !isNaN(parseFloat(fuelManual)) ? parseFloat(fuelManual) : null;
-
-  rows.push({ date, purpose, from, to, km, rate, fuelOverride, mapsUrl, userImg: null });
-  ['in-date','in-purpose','in-from','in-to','in-km','in-fuel-manual'].forEach(id => document.getElementById(id).value = '');
+  rows.push({ date, purpose, from, to, km, rate, mapsUrl, userImg: null });
+  ['in-date','in-purpose','in-from','in-to','in-km'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('preview-link').innerHTML = '';
 
-  const displayAmt = fuelOverride !== null ? fuelOverride.toFixed(2) : (km * rate).toFixed(2);
-  document.getElementById('fetch-status').innerHTML = `✓ เพิ่มแล้ว ${km} กม. | ค่าน้ำมัน ฿${displayAmt}`;
+  document.getElementById('fetch-status').innerHTML = `✓ เพิ่มแล้ว ${km} กม. | ค่าน้ำมัน ฿${(km * rate).toFixed(2)}`;
   renderTable();
   saveData();
 }
@@ -609,7 +608,6 @@ function addGrabRow() {
 
 function getRowAmount(r) {
   if (r.type === 'grab') return r.amount;
-  if (r.fuelOverride !== null && r.fuelOverride !== undefined) return r.fuelOverride;
   return r.km * r.rate;
 }
 
@@ -629,7 +627,6 @@ function renderTable() {
   rows.forEach((r, i) => {
     const isGrab = r.type === 'grab';
     const amt = getRowAmount(r);
-    const hasManualFuel = !isGrab && r.fuelOverride !== null && r.fuelOverride !== undefined;
     const tr = document.createElement('tr');
     tr.style.background = isGrab ? '#f0fff4' : '';
 
@@ -640,9 +637,7 @@ function renderTable() {
       ? `<div style="display:flex;gap:4px;align-items:center"><img src="${r.userImg}" class="map-thumb"><button class="danger sm" onclick="removeUserImg(${i})">ลบ</button></div>`
       : `<label class="upload-lbl"><span style="font-size:18px">+</span><span>${isGrab ? 'ใบเสร็จ' : 'รูป'}</span><input type="file" accept="image/*" style="display:none" onchange="uploadUserImg(${i},this.files[0])"></label>`;
 
-    const fuelDisplay = isGrab ? '-' : (hasManualFuel
-      ? `<strong>${amt.toFixed(0)}</strong> <span class="fuel-badge">กรอกเอง</span>`
-      : `<strong>${amt.toFixed(0)}</strong>`);
+    const fuelDisplay = isGrab ? '-' : `<strong>${amt.toFixed(0)}</strong>`;
 
     tr.innerHTML = `
       <td>${i+1}</td>

@@ -49,15 +49,19 @@ tbody tr:hover td{background:#f9f9ff}
 #login-bar{background:#fff;border-bottom:1px solid #eee;padding:10px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .user-info{display:flex;align-items:center;gap:10px;font-size:13px}
 .user-info img{width:32px;height:32px;border-radius:50%}
-.drive-status{font-size:12px;color:#666;margin-left:8px}
-.drive-ok{color:#2e7d32}
-.drive-err{color:#c62828}
 #app-body{display:none}
 #login-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;gap:20px}
 #login-screen h2{font-size:24px;font-weight:600;color:#1a1a2e}
 #login-screen p{color:#666;font-size:14px;text-align:center;max-width:400px}
 .folder-picker{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .folder-name{font-size:13px;color:#444;background:#f0f4ff;padding:4px 12px;border-radius:6px;border:1px solid #c5d1f8}
+/* Month file list */
+.month-files{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.month-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;background:#f0f4ff;border:1px solid #c5d1f8;font-size:12px;color:#4f6ef7;cursor:pointer}
+.month-chip:hover{background:#e0e8ff}
+.month-chip.active{background:#4f6ef7;color:#fff;border-color:#4f6ef7}
+/* fuel badge */
+.fuel-badge{display:inline-block;padding:2px 7px;border-radius:99px;font-size:11px;font-weight:500;background:#fff8e1;color:#e65100}
 </style>
 </head>
 <body>
@@ -68,7 +72,7 @@ tbody tr:hover td{background:#f9f9ff}
   <div style="display:flex;align-items:center;gap:12px">
     <div class="folder-picker">
       <span style="font-size:12px;color:#888">บันทึกใน Drive:</span>
-      <span class="folder-name" id="folder-name">root (My Drive)</span>
+      <span class="folder-name" id="folder-name">Travelling Event</span>
       <button class="sm" onclick="pickFolder()">เปลี่ยนโฟลเดอร์</button>
     </div>
     <div class="user-info">
@@ -110,14 +114,20 @@ tbody tr:hover td{background:#f9f9ff}
   <div class="card">
     <h3>ข้อมูลทั่วไป</h3>
     <div class="row">
-      <div class="field"><label>เดือน</label><input type="month" id="month" style="width:140px" oninput="loadMonthData()"></div>
+      <div class="field"><label>เดือน</label><input type="month" id="month" style="width:140px"></div>
       <div class="field"><label>ชื่อพนักงาน</label><input type="text" id="emp" placeholder="ชื่อ-นามสกุล" style="width:170px"></div>
       <div class="field"><label>แผนก</label><input type="text" id="dept" placeholder="แผนก" style="width:130px"></div>
       <div class="field"><label>อัตราน้ำมัน (บ/กม.)</label>
         <select id="rate-default" style="width:75px"><option value="5">5</option><option value="6">6</option></select>
       </div>
-      <button class="primary" onclick="saveData()" style="margin-top:4px">💾 บันทึก</button>
+      <button class="primary" onclick="switchMonth()" style="margin-top:4px">📂 โหลดเดือนนี้</button>
+      <button class="primary" onclick="saveData()" style="margin-top:4px;background:#2e7d32;border-color:#2e7d32">💾 บันทึก</button>
       <span id="save-status" style="font-size:12px;color:#666;align-self:center"></span>
+    </div>
+    <!-- Month chips -->
+    <div style="margin-top:10px">
+      <div style="font-size:11px;color:#aaa;margin-bottom:6px">ไฟล์ที่บันทึกไว้ (คลิกเพื่อโหลด):</div>
+      <div class="month-files" id="month-chips"></div>
     </div>
   </div>
 
@@ -129,6 +139,7 @@ tbody tr:hover td{background:#f9f9ff}
       <div class="field"><label>ต้นทาง</label><input type="text" id="in-from" placeholder="เช่น สีลม กรุงเทพ" style="width:185px" oninput="updatePreviewLink()"></div>
       <div class="field"><label>ปลายทาง</label><input type="text" id="in-to" placeholder="เช่น Valia Hotel Bangkok" style="width:185px" oninput="updatePreviewLink()"></div>
       <div class="field"><label>ระยะทาง (กม.) จาก Maps</label><input type="number" id="in-km" placeholder="เช่น 15.8" step="0.1" min="0" style="width:130px"></div>
+      <div class="field"><label>ค่าน้ำมัน (฿) กรอกเองได้</label><input type="number" id="in-fuel-manual" placeholder="ว่าง = คำนวณอัตโนมัติ" step="0.01" min="0" style="width:170px"></div>
     </div>
     <div style="margin-bottom:8px"><span id="preview-link"></span></div>
     <div class="row">
@@ -193,15 +204,18 @@ tbody tr:hover td{background:#f9f9ff}
 <script>
 const CLIENT_ID = '881983323724-jlnidu3v90rl923gfj5tp63soc222t6u.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
-const FOLDER_NAME = 'Travelling Event';
+const DEFAULT_FOLDER_NAME = 'Travelling Event';
 
 let accessToken = '';
 let userEmail = '';
 let folderId = null;
-let folderNameText = FOLDER_NAME;
+let folderNameText = DEFAULT_FOLDER_NAME;
 let rows = [];
 let apiKey = '';
 let mapsReady = false;
+
+// ===== currentMonth tracks which month file is loaded =====
+let currentMonth = '';
 
 // ==================== AUTH ====================
 function signIn() {
@@ -234,7 +248,7 @@ async function fetchUserInfo() {
 
 function signOut() {
   google.accounts.oauth2.revoke(accessToken, () => {
-    accessToken = ''; rows = []; folderId = null;
+    accessToken = ''; rows = []; folderId = null; currentMonth = '';
     document.getElementById('app-body').style.display = 'none';
     document.getElementById('login-bar').style.display = 'none';
     document.getElementById('login-screen').style.display = 'flex';
@@ -247,177 +261,207 @@ async function showApp() {
   document.getElementById('login-bar').style.display = 'flex';
   document.getElementById('app-body').style.display = 'block';
 
-  // สร้าง/หาโฟลเดอร์ Travelling Event
   await initTravellingFolder();
 
-  // โหลดไฟล์ล่าสุดที่แก้ไข
-  await loadLatestFile();
-}
-
-async function loadLatestFile() {
-  try {
-    const q = encodeURIComponent(`'${folderId}' in parents and mimeType='application/json' and trashed=false`);
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name)`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    const data = await res.json();
-    console.log('loadLatestFile result:', JSON.stringify(data));
-
-    if (data.files && data.files.length > 0) {
-      const file = data.files[0];
-      const match = file.name.match(/(\d{4})_(\d{2})\.json$/);
-      if (match) {
-        document.getElementById('month').value = `${match[1]}-${match[2]}`;
-      }
-      const fileRes = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-      const fileData = await fileRes.json();
-      document.getElementById('emp').value = fileData.emp || '';
-      document.getElementById('dept').value = fileData.dept || '';
-      document.getElementById('rate-default').value = fileData.rate || '5';
-      document.getElementById('toll').value = fileData.toll || '';
-      document.getElementById('parking').value = fileData.parking || '';
-      document.getElementById('other').value = fileData.other || '';
-      rows = fileData.rows || [];
-      renderTable();
-      document.getElementById('save-status').innerHTML = '✓ โหลดข้อมูลแล้ว';
-      setTimeout(() => document.getElementById('save-status').innerHTML = '', 3000);
-      return;
-    }
-  } catch(e) { console.error('loadLatestFile error:', e); }
-
+  // Set current month to today by default
   const now = new Date();
-  document.getElementById('month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  rows = [];
-  renderTable();
+  const thisMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  document.getElementById('month').value = thisMonth;
+
+  await loadMonthChips();
+  await loadMonthData(thisMonth);
 }
 
+// ==================== FOLDER ====================
 async function initTravellingFolder() {
   try {
-    // ค้นหาโฟลเดอร์ก่อน
-    const q = encodeURIComponent(`name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const q = encodeURIComponent(`name='${DEFAULT_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
     const searchRes = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const searchData = await searchRes.json();
-
     if (searchData.files && searchData.files.length > 0) {
       folderId = searchData.files[0].id;
     } else {
-      // สร้างโฟลเดอร์ใหม่
       const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ name: FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: DEFAULT_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
       });
       const created = await createRes.json();
       folderId = created.id;
     }
-    document.getElementById('folder-name').textContent = FOLDER_NAME;
-  } catch(e) {
-    console.error('Folder init error:', e);
-  }
-}
-
-async function getLastUsedMonth() {
-  try {
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and name='_last_month.txt' and trashed=false&fields=files(id)`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    const data = await res.json();
-    if (data.files && data.files.length > 0) {
-      const fileRes = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${data.files[0].id}?alt=media`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-      return await fileRes.text();
-    }
-  } catch(e) {}
-  return null;
-}
-
-async function saveLastUsedMonth(month) {
-  try {
-    const searchRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and name='_last_month.txt' and trashed=false&fields=files(id)`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    const searchData = await searchRes.json();
-    const fileId = searchData.files && searchData.files.length > 0 ? searchData.files[0].id : null;
-
-    const form = new FormData();
-    const meta = { name: '_last_month.txt', parents: fileId ? undefined : [folderId] };
-    form.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
-    form.append('file', new Blob([month], { type: 'text/plain' }));
-
-    const url = fileId
-      ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
-      : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
-    await fetch(url, {
-      method: fileId ? 'PATCH' : 'POST',
-      headers: { Authorization: `Bearer ${accessToken}` },
-      body: form
-    });
-  } catch(e) {}
-}
-
-// ==================== DRIVE ====================
-async function driveRequest(url, method='GET', body=null, contentType='application/json') {
-  const opts = { method, headers: { Authorization: `Bearer ${accessToken}` } };
-  if (body) { opts.body = body; opts.headers['Content-Type'] = contentType; }
-  const res = await fetch(url, opts);
-  return res;
+    document.getElementById('folder-name').textContent = DEFAULT_FOLDER_NAME;
+  } catch(e) { console.error('Folder init error:', e); }
 }
 
 async function pickFolder() {
-  const name = prompt('กรอกชื่อโฟลเดอร์ใน Google Drive ที่ต้องการบันทึก (ว่างไว้ = My Drive):');
+  const name = prompt('กรอกชื่อโฟลเดอร์ใน Google Drive (ว่างไว้ = My Drive):');
   if (name === null) return;
-  if (!name.trim()) { folderId = 'root'; folderNameText = 'My Drive'; document.getElementById('folder-name').textContent = folderNameText; return; }
-  // ค้นหาโฟลเดอร์
-  const res = await driveRequest(`https://www.googleapis.com/drive/v3/files?q=name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)`);
+  if (!name.trim()) {
+    folderId = 'root'; folderNameText = 'My Drive';
+    document.getElementById('folder-name').textContent = folderNameText;
+    return;
+  }
+  const q = encodeURIComponent(`name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`,
+    { headers: { Authorization: `Bearer ${accessToken}` } });
   const data = await res.json();
   if (data.files && data.files.length > 0) {
-    folderId = data.files[0].id;
-    folderNameText = data.files[0].name;
-    document.getElementById('folder-name').textContent = folderNameText;
-    alert(`เลือกโฟลเดอร์: ${folderNameText} ✓`);
+    folderId = data.files[0].id; folderNameText = data.files[0].name;
   } else {
-    // สร้างโฟลเดอร์ใหม่
-    const createRes = await driveRequest('https://www.googleapis.com/drive/v3/files', 'POST', JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder' }));
-    const created = await createRes.json();
+    const cr = await fetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder' })
+    });
+    const created = await cr.json();
     folderId = created.id; folderNameText = name;
-    document.getElementById('folder-name').textContent = folderNameText;
-    alert(`สร้างโฟลเดอร์ใหม่: ${name} ✓`);
   }
+  document.getElementById('folder-name').textContent = folderNameText;
+  alert(`เลือกโฟลเดอร์: ${folderNameText} ✓`);
 }
 
-function getFileName() {
-  const [yr, mo] = document.getElementById('month').value.split('-');
-  const emp = document.getElementById('emp').value.trim() || 'user';
+// ==================== FILE NAMING ====================
+function getFileName(month, empName) {
+  const [yr, mo] = month.split('-');
+  const emp = (empName || document.getElementById('emp').value.trim() || 'user').replace(/\s+/g,'_');
   return `travel_${emp}_${yr}_${mo}.json`;
 }
 
 async function findFile(name) {
   const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
-  const res = await driveRequest(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`,
+    { headers: { Authorization: `Bearer ${accessToken}` } });
   const data = await res.json();
-  return data.files && data.files.length > 0 ? data.files[0].id : null;
+  return (data.files && data.files.length > 0) ? data.files[0].id : null;
+}
+
+// ==================== MONTH CHIPS ====================
+async function loadMonthChips() {
+  if (!folderId) return;
+  try {
+    const q = encodeURIComponent(`'${folderId}' in parents and mimeType='application/json' and trashed=false and name contains 'travel_'`);
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=name+desc&pageSize=50&fields=files(id,name)`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    const data = await res.json();
+    const chips = document.getElementById('month-chips');
+    chips.innerHTML = '';
+    if (!data.files || data.files.length === 0) {
+      chips.innerHTML = '<span style="font-size:12px;color:#bbb">ยังไม่มีไฟล์</span>';
+      return;
+    }
+    data.files.forEach(file => {
+      // parse travel_EMP_YYYY_MM.json
+      const match = file.name.match(/travel_(.+)_(\d{4})_(\d{2})\.json$/);
+      if (!match) return;
+      const [, emp, yr, mo] = match;
+      const monthVal = `${yr}-${mo}`;
+      const chip = document.createElement('span');
+      chip.className = 'month-chip' + (monthVal === currentMonth ? ' active' : '');
+      chip.textContent = `${mo}/${yr} (${emp.replace(/_/g,' ')})`;
+      chip.title = file.name;
+      chip.onclick = () => {
+        document.getElementById('month').value = monthVal;
+        loadMonthData(monthVal);
+      };
+      chips.appendChild(chip);
+    });
+  } catch(e) { console.error('loadMonthChips error:', e); }
+}
+
+// ==================== LOAD / SAVE ====================
+// switchMonth = user explicitly clicked "โหลดเดือนนี้" button
+async function switchMonth() {
+  const month = document.getElementById('month').value;
+  if (!month) return;
+  await loadMonthData(month);
+}
+
+async function loadMonthData(month) {
+  if (!accessToken || !folderId) return;
+  const emp = document.getElementById('emp').value.trim();
+  const filename = getFileName(month, emp);
+  const status = document.getElementById('save-status');
+
+  // Try to find file with current emp name first, then search all files for that month
+  let fileId = await findFile(filename);
+
+  // If not found, search for any travel file with same month (different emp name)
+  if (!fileId) {
+    const [yr, mo] = month.split('-');
+    const q = encodeURIComponent(`'${folderId}' in parents and mimeType='application/json' and trashed=false and name contains 'travel_' and name contains '_${yr}_${mo}.json'`);
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`,
+      { headers: { Authorization: `Bearer ${accessToken}` } });
+    const data = await res.json();
+    if (data.files && data.files.length > 0) {
+      fileId = data.files[0].id;
+    }
+  }
+
+  if (!fileId) {
+    // No file for this month — start fresh BUT do NOT clear current data if we haven't confirmed
+    if (currentMonth && currentMonth !== month) {
+      // Switching to a new month: blank slate
+      rows = [];
+      document.getElementById('toll').value = '';
+      document.getElementById('parking').value = '';
+      document.getElementById('other').value = '';
+      renderTable();
+    }
+    currentMonth = month;
+    status.innerHTML = '<span style="color:#888">ไม่พบไฟล์สำหรับเดือนนี้ (จะสร้างใหม่เมื่อบันทึก)</span>';
+    setTimeout(() => status.innerHTML = '', 3000);
+    refreshChipHighlight();
+    return;
+  }
+
+  try {
+    const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+      { headers: { Authorization: `Bearer ${accessToken}` } });
+    const fileData = await fileRes.json();
+
+    document.getElementById('emp').value = fileData.emp || '';
+    document.getElementById('dept').value = fileData.dept || '';
+    document.getElementById('rate-default').value = fileData.rate || '5';
+    document.getElementById('toll').value = fileData.toll || '';
+    document.getElementById('parking').value = fileData.parking || '';
+    document.getElementById('other').value = fileData.other || '';
+    rows = fileData.rows || [];
+    currentMonth = month;
+    renderTable();
+    status.innerHTML = '✓ โหลดข้อมูลแล้ว';
+    setTimeout(() => status.innerHTML = '', 3000);
+    refreshChipHighlight();
+  } catch(e) {
+    console.error('loadMonthData error:', e);
+    status.innerHTML = '<span style="color:#e74c3c">โหลดไม่สำเร็จ</span>';
+  }
+}
+
+function refreshChipHighlight() {
+  document.querySelectorAll('.month-chip').forEach(chip => {
+    // chip title contains filename, parse month from it
+    const match = chip.title.match(/_(\d{4})_(\d{2})\.json$/);
+    if (match) {
+      const mv = `${match[1]}-${match[2]}`;
+      chip.classList.toggle('active', mv === currentMonth);
+    }
+  });
 }
 
 async function saveData() {
   if (!accessToken || !folderId) return;
+  const month = document.getElementById('month').value;
+  if (!month) { alert('กรุณาเลือกเดือน'); return; }
+
   const status = document.getElementById('save-status');
   status.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
+
   try {
-    const month = document.getElementById('month').value;
     const saveObj = {
       emp: document.getElementById('emp').value,
       dept: document.getElementById('dept').value,
@@ -425,48 +469,47 @@ async function saveData() {
       toll: document.getElementById('toll').value,
       parking: document.getElementById('parking').value,
       other: document.getElementById('other').value,
-      rows: rows.map(r => ({ ...r, userImg: r.userImg || null }))
+      rows: rows.map(r => {
+        // Store image separately to keep JSON small: only keep if small enough
+        const rowCopy = { ...r };
+        // Keep userImg as-is (user chose to add it)
+        return rowCopy;
+      })
     };
+
     const content = JSON.stringify(saveObj);
-    const filename = getFileName();
+    const filename = getFileName(month, saveObj.emp);
     const fileId = await findFile(filename);
-    const meta = { name: filename, parents: fileId ? undefined : [folderId] };
+
+    const metaObj = { name: filename };
+    // Only add parents when creating (not updating)
+    if (!fileId) metaObj.parents = [folderId];
+
     const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+    form.append('metadata', new Blob([JSON.stringify(metaObj)], { type: 'application/json' }));
     form.append('file', new Blob([content], { type: 'application/json' }));
+
     const url = fileId
       ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
       : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
     const method = fileId ? 'PATCH' : 'POST';
-    await fetch(url, { method, headers: { Authorization: `Bearer ${accessToken}` }, body: form });
-    // บันทึกเดือนล่าสุด
-    await saveLastUsedMonth(month);
+
+    const res = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form
+    });
+
+    if (!res.ok) throw new Error('Drive API error ' + res.status);
+
+    currentMonth = month;
     status.innerHTML = '✓ บันทึกแล้ว';
     setTimeout(() => status.innerHTML = '', 3000);
+    await loadMonthChips();
   } catch(e) {
+    console.error('saveData error:', e);
     status.innerHTML = '<span style="color:#e74c3c">บันทึกไม่สำเร็จ</span>';
   }
-}
-
-async function loadMonthData() {
-  if (!accessToken) return;
-  const filename = getFileName();
-  const fileId = await findFile(filename);
-  if (!fileId) { rows = []; renderTable(); return; }
-  try {
-    const res = await driveRequest(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
-    const data = await res.json();
-    document.getElementById('emp').value = data.emp || '';
-    document.getElementById('dept').value = data.dept || '';
-    document.getElementById('rate-default').value = data.rate || '5';
-    document.getElementById('toll').value = data.toll || '';
-    document.getElementById('parking').value = data.parking || '';
-    document.getElementById('other').value = data.other || '';
-    rows = data.rows || [];
-    renderTable();
-    document.getElementById('save-status').innerHTML = '✓ โหลดข้อมูลแล้ว';
-    setTimeout(() => document.getElementById('save-status').innerHTML = '', 3000);
-  } catch(e) { rows = []; renderTable(); }
 }
 
 // ==================== MAPS ====================
@@ -514,14 +557,23 @@ function addRow() {
   const from = document.getElementById('in-from').value.trim();
   const to = document.getElementById('in-to').value.trim();
   const km = parseFloat(document.getElementById('in-km').value);
+  const fuelManual = document.getElementById('in-fuel-manual').value.trim();
+
   if (!date || !from || !to) { alert('กรุณากรอกวันที่ ต้นทาง และปลายทาง'); return; }
   if (!km || km <= 0) { alert('กรุณากรอกระยะทางจาก Google Maps ก่อนค่ะ'); return; }
+
   const rate = parseFloat(document.getElementById('rate-default').value);
   const mapsUrl = `https://www.google.com/maps/dir/${encodeURIComponent(from)}/${encodeURIComponent(to)}`;
-  rows.push({ date, purpose, from, to, km, rate, mapsUrl, userImg: null });
-  ['in-date','in-purpose','in-from','in-to','in-km'].forEach(id => document.getElementById(id).value = '');
+
+  // fuelManual: if provided, use it; otherwise leave null (computed from km*rate)
+  const fuelOverride = fuelManual !== '' && !isNaN(parseFloat(fuelManual)) ? parseFloat(fuelManual) : null;
+
+  rows.push({ date, purpose, from, to, km, rate, fuelOverride, mapsUrl, userImg: null });
+  ['in-date','in-purpose','in-from','in-to','in-km','in-fuel-manual'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('preview-link').innerHTML = '';
-  document.getElementById('fetch-status').innerHTML = `✓ เพิ่มแล้ว ${km} กม.`;
+
+  const displayAmt = fuelOverride !== null ? fuelOverride.toFixed(2) : (km * rate).toFixed(2);
+  document.getElementById('fetch-status').innerHTML = `✓ เพิ่มแล้ว ${km} กม. | ค่าน้ำมัน ฿${displayAmt}`;
   renderTable();
   saveData();
 }
@@ -545,7 +597,7 @@ function addGrabRow() {
   const amount = parseFloat(document.getElementById('grab-amount').value);
   if (!date || !venue) { alert('กรุณากรอกวันที่และปลายทาง'); return; }
   if (!amount || amount <= 0) { alert('กรุณากรอกค่า Grab'); return; }
-  rows.push({ date, purpose, from: '', to: venue, km: null, rate: null, amount, type: 'grab', mapsUrl: null, userImg: grabImgData });
+  rows.push({ date, purpose, from: '', to: venue, km: null, rate: null, fuelOverride: null, amount, type: 'grab', mapsUrl: null, userImg: grabImgData });
   ['grab-date','grab-purpose','grab-venue','grab-amount'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('grab-img').value = '';
   document.getElementById('grab-img-preview').textContent = '';
@@ -553,6 +605,12 @@ function addGrabRow() {
   document.getElementById('grab-status').textContent = `✓ เพิ่ม Grab ${amount} ฿`;
   renderTable();
   saveData();
+}
+
+function getRowAmount(r) {
+  if (r.type === 'grab') return r.amount;
+  if (r.fuelOverride !== null && r.fuelOverride !== undefined) return r.fuelOverride;
+  return r.km * r.rate;
 }
 
 function uploadUserImg(i, file) {
@@ -570,17 +628,21 @@ function renderTable() {
   tbody.innerHTML = '';
   rows.forEach((r, i) => {
     const isGrab = r.type === 'grab';
-    const amt = isGrab ? r.amount : r.km * r.rate;
+    const amt = getRowAmount(r);
+    const hasManualFuel = !isGrab && r.fuelOverride !== null && r.fuelOverride !== undefined;
     const tr = document.createElement('tr');
     tr.style.background = isGrab ? '#f0fff4' : '';
 
     const mapsUrl = r.mapsUrl || (r.from && r.to ? `https://www.google.com/maps/dir/${encodeURIComponent(r.from)}/${encodeURIComponent(r.to)}` : null);
-
     const linkCell = isGrab ? '' : (mapsUrl ? `<a href="${mapsUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;background:#1a73e8;color:#fff;border-radius:6px;font-size:11px;text-decoration:none;white-space:nowrap">🗺 Maps</a>` : '');
 
     let imgCell = r.userImg
       ? `<div style="display:flex;gap:4px;align-items:center"><img src="${r.userImg}" class="map-thumb"><button class="danger sm" onclick="removeUserImg(${i})">ลบ</button></div>`
       : `<label class="upload-lbl"><span style="font-size:18px">+</span><span>${isGrab ? 'ใบเสร็จ' : 'รูป'}</span><input type="file" accept="image/*" style="display:none" onchange="uploadUserImg(${i},this.files[0])"></label>`;
+
+    const fuelDisplay = isGrab ? '-' : (hasManualFuel
+      ? `<strong>${amt.toFixed(0)}</strong> <span class="fuel-badge">กรอกเอง</span>`
+      : `<strong>${amt.toFixed(0)}</strong>`);
 
     tr.innerHTML = `
       <td>${i+1}</td>
@@ -589,7 +651,7 @@ function renderTable() {
       <td style="font-size:12px;color:#888">${isGrab ? r.to : (r.from + ' → ' + r.to)}</td>
       <td class="num">${isGrab ? '-' : `<strong>${r.km.toFixed(1)}</strong>`}</td>
       <td class="num">${isGrab ? '-' : r.rate}</td>
-      <td class="num"><strong>${amt.toFixed(0)}</strong></td>
+      <td class="num">${fuelDisplay}</td>
       <td><span style="display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:500;background:${isGrab ? '#e8f5e9' : '#e8f0fe'};color:${isGrab ? '#2e7d32' : '#1a73e8'}">${isGrab ? 'Grab' : 'รถส่วนตัว'}</span></td>
       <td>${linkCell}</td>
       <td>${imgCell}</td>
@@ -602,7 +664,7 @@ function renderTable() {
 
 function updateSummary() {
   const totalKm = rows.filter(r => r.type !== 'grab').reduce((s,r) => s+r.km, 0);
-  const fuelAmt = rows.filter(r => r.type !== 'grab').reduce((s,r) => s+r.km*r.rate, 0);
+  const fuelAmt = rows.filter(r => r.type !== 'grab').reduce((s,r) => s + getRowAmount(r), 0);
   const grabAmt = rows.filter(r => r.type === 'grab').reduce((s,r) => s+r.amount, 0);
   const toll = parseFloat(document.getElementById('toll').value)||0;
   const parking = parseFloat(document.getElementById('parking').value)||0;
@@ -615,10 +677,11 @@ function updateSummary() {
 }
 
 function clearAll() {
-  if (!confirm('ล้างข้อมูลทั้งหมด?')) return;
+  if (!confirm('ล้างข้อมูลทั้งหมดในเดือนนี้?')) return;
   rows = [];
   ['toll','parking','other'].forEach(id => document.getElementById(id).value = '');
-  renderTable(); saveData();
+  renderTable();
+  saveData();
 }
 
 function getMonthName(mo) {
@@ -629,7 +692,6 @@ function getMonthNameEng(mo) {
 }
 
 async function exportExcel() {
-  // โหลด ExcelJS ถ้ายังไม่มี
   if (typeof ExcelJS === 'undefined') {
     await new Promise((resolve, reject) => {
       const s = document.createElement('script');
@@ -653,18 +715,14 @@ async function exportExcel() {
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Sheet1');
-  ws.columns = [
-    {width:14},{width:24},{width:26},{width:12},{width:8},{width:12}
-  ];
+  ws.columns = [{width:14},{width:24},{width:26},{width:12},{width:8},{width:12}];
 
-  // Row 1: Title
   ws.mergeCells('A1:F1');
   const titleCell = ws.getCell('A1');
   titleCell.value = `Travelling Expense in ${mNameEng} ${yr}`;
   titleCell.font = { bold: true, size: 13 };
   titleCell.alignment = { horizontal: 'center' };
 
-  // Row 2: Headers
   const headers = ['Date','Purpose','Venue','Distance','Fee','Amount'];
   const headerRow = ws.addRow(headers);
   headerRow.eachCell(cell => {
@@ -674,16 +732,20 @@ async function exportExcel() {
     cell.border = { bottom:{ style:'thin', color:{ argb:'FFAAAAAA' } } };
   });
 
-  // Data rows
   let excelRowNum = 3;
   rows.forEach(r => {
     const isGrab = r.type === 'grab';
     const bgColor = isGrab ? 'FFE2EFDA' : 'FFDEEAF1';
+    const amt = getRowAmount(r);
     let rowData;
     if (isGrab) {
       rowData = [fmt(r.date), r.purpose||'', r.to, '', 'Grab', r.amount];
     } else {
-      rowData = [fmt(r.date), r.purpose||'', r.to, r.km, r.rate, { formula: `D${excelRowNum}*E${excelRowNum}` }];
+      // If manual fuel override, use fixed value; otherwise formula
+      const amtVal = (r.fuelOverride !== null && r.fuelOverride !== undefined)
+        ? r.fuelOverride
+        : { formula: `D${excelRowNum}*E${excelRowNum}` };
+      rowData = [fmt(r.date), r.purpose||'', r.to, r.km, r.rate, amtVal];
     }
     const dataRow = ws.addRow(rowData);
     dataRow.eachCell({ includeEmpty: true }, cell => {
@@ -693,30 +755,25 @@ async function exportExcel() {
     excelRowNum++;
   });
 
-  // Toll / Parking / Other
   const addExtraRow = (label, val) => {
     if (!val) return;
     const r = ws.addRow([null, label, null, null, null, val]);
     r.getCell(6).numFmt = '#,##0';
     excelRowNum++;
   };
-  addExtraRow('Toll Fee', toll > 0 ? toll : null);
-  addExtraRow('Car Parking', parking > 0 ? parking : null);
+  if (toll > 0) addExtraRow('Toll Fee', toll);
+  if (parking > 0) addExtraRow('Car Parking', parking);
   if (other > 0) addExtraRow('Other', other);
 
-  // Total row
   const totalRow = ws.addRow(['Total', null, null, null, null, { formula: `SUM(F3:F${excelRowNum-1})` }]);
   totalRow.eachCell({ includeEmpty: true }, cell => {
     cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FF1F4E79' } };
     cell.font = { color:{ argb:'FFFFFFFF' }, bold:true };
   });
   totalRow.getCell(6).numFmt = '#,##0';
-
-  // Format number columns
   ws.getColumn(4).numFmt = '#,##0.0';
   ws.getColumn(6).numFmt = '#,##0';
 
-  // Export
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
@@ -743,16 +800,31 @@ async function exportDoc() {
     children: [new TextRun({ text: `MAP หลักฐานการเดินทาง — ${mName} ${yr}`, bold: true, size: 32 })],
     alignment: AlignmentType.CENTER, spacing: { after: 400 }
   }));
+
   const grouped = {};
   rows.forEach(r => { if (!grouped[r.date]) grouped[r.date]=[]; grouped[r.date].push(r); });
   const dates = Object.keys(grouped).sort();
+
   for (let di=0; di<dates.length; di++) {
     const date = dates[di];
     const dayRows = grouped[date];
     if (di>0) children.push(new Paragraph({ children: [new PageBreak()] }));
     children.push(new Paragraph({ children: [new TextRun({ text: fmt(date), bold: true, size: 26 })], spacing: { after: 120 } }));
+
     for (const r of dayRows) {
-      children.push(new Paragraph({ children: [new TextRun({ text: `${r.purpose||r.to}   |   ${r.from} → ${r.to}   |   ${r.km.toFixed(1)} กม.`, size: 20, color: '555555' })], spacing: { after: 120 } }));
+      const isGrab = r.type === 'grab';
+      const amt = getRowAmount(r);
+
+      // FIX: guard against null km for Grab rows
+      const routeText = isGrab
+        ? `${r.purpose||r.to}   |   Grab → ${r.to}   |   ฿${amt.toFixed(0)}`
+        : `${r.purpose||r.to}   |   ${r.from} → ${r.to}   |   ${r.km.toFixed(1)} กม.`;
+
+      children.push(new Paragraph({
+        children: [new TextRun({ text: routeText, size: 20, color: '555555' })],
+        spacing: { after: 120 }
+      }));
+
       if (r.userImg) {
         try {
           const base64 = r.userImg.split(',')[1];
@@ -760,15 +832,22 @@ async function exportDoc() {
           const bytes = new Uint8Array(binary.length);
           for (let j=0; j<binary.length; j++) bytes[j] = binary.charCodeAt(j);
           const imgType = r.userImg.includes('image/png')?'png':'jpg';
-          children.push(new Paragraph({ children: [new ImageRun({ data: bytes.buffer, transformation: { width: 460, height: 280 }, type: imgType })], spacing: { after: 160 } }));
+          children.push(new Paragraph({
+            children: [new ImageRun({ data: bytes.buffer, transformation: { width: 460, height: 280 }, type: imgType })],
+            spacing: { after: 160 }
+          }));
         } catch(e) {
-          children.push(new Paragraph({ children: [new TextRun({ text: `[แผนที่: ${r.from} → ${r.to}]`, size: 20, color: '999999', italics: true })] }));
+          children.push(new Paragraph({ children: [new TextRun({ text: `[แผนที่: ${r.from||r.to}]`, size: 20, color: '999999', italics: true })] }));
         }
       } else {
-        children.push(new Paragraph({ children: [new TextRun({ text: '[ ยังไม่มีรูป — กด เปิด Maps แล้ว screenshot ใส่ ]', size: 20, color: '999999', italics: true })], spacing: { after: 160 } }));
+        children.push(new Paragraph({
+          children: [new TextRun({ text: '[ ยังไม่มีรูป — กด เปิด Maps แล้ว screenshot ใส่ ]', size: 20, color: '999999', italics: true })],
+          spacing: { after: 160 }
+        }));
       }
     }
   }
+
   const doc = new Document({ sections: [{ children }] });
   const blob = await Packer.toBlob(doc);
   const url = URL.createObjectURL(blob);

@@ -386,9 +386,13 @@ async function loadMonthData(month) {
   const filename = getFileName(month, emp);
   const status = document.getElementById('save-status');
 
-  // ถ้าเปลี่ยนเดือน ให้บันทึกข้อมูลเดือนปัจจุบันก่อน (ป้องกันหาย)
-  if (currentMonth && currentMonth !== month) {
-    await saveData(true); // silent save
+  // ถ้าเปลี่ยนเดือน และมีข้อมูลอยู่ ให้บันทึกก่อน (ป้องกันหาย)
+  const hasSomething = rows.length > 0
+    || document.getElementById('toll').value
+    || document.getElementById('parking').value
+    || document.getElementById('other').value;
+  if (currentMonth && currentMonth !== month && hasSomething) {
+    await saveData(true);
   }
 
   // Try to find file with current emp name first
@@ -456,9 +460,11 @@ function refreshChipHighlight() {
 
 async function saveData(silent = false) {
   if (!accessToken || !folderId) return;
-  // silent save ใช้ currentMonth (เดือนที่โหลดอยู่) ไม่ใช่ค่าจาก input
-  const month = silent ? currentMonth : document.getElementById('month').value;
+  // silent save ใช้ currentMonth, manual save ใช้ค่าจาก input
+  const month = (silent && currentMonth) ? currentMonth : document.getElementById('month').value;
   if (!month) { if (!silent) alert('กรุณาเลือกเดือน'); return; }
+  // ถ้า silent และไม่มี currentMonth ให้ข้ามไปเลย (ยังไม่ได้โหลดเดือนใด)
+  if (silent && !currentMonth) return;
 
   const status = document.getElementById('save-status');
   if (!silent) status.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
@@ -572,6 +578,9 @@ function addRow() {
   ['in-date','in-purpose','in-from','in-to','in-km'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('preview-link').innerHTML = '';
 
+  // sync currentMonth กับ input ถ้ายังไม่ได้ set
+  if (!currentMonth) currentMonth = document.getElementById('month').value;
+
   document.getElementById('fetch-status').innerHTML = `✓ เพิ่มแล้ว ${km} กม. | ค่าน้ำมัน ฿${(km * rate).toFixed(2)}`;
   renderTable();
   saveData();
@@ -596,11 +605,13 @@ function addGrabRow() {
   const amount = parseFloat(document.getElementById('grab-amount').value);
   if (!date || !venue) { alert('กรุณากรอกวันที่และปลายทาง'); return; }
   if (!amount || amount <= 0) { alert('กรุณากรอกค่า Grab'); return; }
-  rows.push({ date, purpose, from: '', to: venue, km: null, rate: null, fuelOverride: null, amount, type: 'grab', mapsUrl: null, userImg: grabImgData });
+  rows.push({ date, purpose, from: '', to: venue, km: null, rate: null, amount, type: 'grab', mapsUrl: null, userImg: grabImgData });
   ['grab-date','grab-purpose','grab-venue','grab-amount'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('grab-img').value = '';
   document.getElementById('grab-img-preview').textContent = '';
   grabImgData = null;
+  // sync currentMonth กับ input ถ้ายังไม่ได้ set
+  if (!currentMonth) currentMonth = document.getElementById('month').value;
   document.getElementById('grab-status').textContent = `✓ เพิ่ม Grab ${amount} ฿`;
   renderTable();
   saveData();
@@ -736,11 +747,7 @@ async function exportExcel() {
     if (isGrab) {
       rowData = [fmt(r.date), r.purpose||'', r.to, '', 'Grab', r.amount];
     } else {
-      // If manual fuel override, use fixed value; otherwise formula
-      const amtVal = (r.fuelOverride !== null && r.fuelOverride !== undefined)
-        ? r.fuelOverride
-        : { formula: `D${excelRowNum}*E${excelRowNum}` };
-      rowData = [fmt(r.date), r.purpose||'', r.to, r.km, r.rate, amtVal];
+      rowData = [fmt(r.date), r.purpose||'', r.to, r.km, r.rate, { formula: `D${excelRowNum}*E${excelRowNum}` }];
     }
     const dataRow = ws.addRow(rowData);
     dataRow.eachCell({ includeEmpty: true }, cell => {

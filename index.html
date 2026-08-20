@@ -493,9 +493,19 @@ async function saveData(silent = false) {
     // Only add parents when creating (not updating)
     if (!fileId) metaObj.parents = [folderId];
 
-    const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify(metaObj)], { type: 'application/json' }));
-    form.append('file', new Blob([content], { type: 'application/json' }));
+    // Google Drive's multipart upload endpoint requires a real
+    // "multipart/related" body with an explicit boundary. Using the
+    // browser's FormData object sends "multipart/form-data" instead,
+    // which Drive silently rejects — that was why saving never worked.
+    const boundary = 'travel_log_boundary_' + Date.now();
+    const multipartBody =
+      `--${boundary}\r\n` +
+      `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+      JSON.stringify(metaObj) + `\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Type: application/json\r\n\r\n` +
+      content + `\r\n` +
+      `--${boundary}--`;
 
     const url = fileId
       ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
@@ -504,11 +514,18 @@ async function saveData(silent = false) {
 
     const res = await fetch(url, {
       method,
-      headers: { Authorization: `Bearer ${accessToken}` },
-      body: form
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`
+      },
+      body: multipartBody
     });
 
-    if (!res.ok) throw new Error('Drive API error ' + res.status);
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('Drive save failed:', res.status, errText);
+      throw new Error('Drive API error ' + res.status);
+    }
 
     currentMonth = month;
     if (!silent) {
@@ -760,7 +777,7 @@ async function exportExcel() {
   const addExtraRow = (label, val) => {
     if (!val) return;
     const r = ws.addRow([null, label, null, null, null, val]);
-    r.getCell(6).numFmt = '#,##0';
+    r.getCell(6).numFmt = '#,##0.00';
     excelRowNum++;
   };
   if (toll > 0) addExtraRow('Toll Fee', toll);
@@ -772,9 +789,10 @@ async function exportExcel() {
     cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FF1F4E79' } };
     cell.font = { color:{ argb:'FFFFFFFF' }, bold:true };
   });
-  totalRow.getCell(6).numFmt = '#,##0';
+  // Keep decimals for Amount column and the total (no rounding to whole baht)
+  totalRow.getCell(6).numFmt = '#,##0.00';
   ws.getColumn(4).numFmt = '#,##0.0';
-  ws.getColumn(6).numFmt = '#,##0';
+  ws.getColumn(6).numFmt = '#,##0.00';
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -818,9 +836,11 @@ async function exportDoc() {
       const amt = getRowAmount(r);
 
       // FIX: guard against null km for Grab rows
+      // For private-car trips, show the fuel calculation explicitly:
+      // distance x rate = amount, e.g. "15.8 x 5 = 79.00 ฿"
       const routeText = isGrab
         ? `${r.purpose||r.to}   |   Grab → ${r.to}   |   ฿${amt.toFixed(0)}`
-        : `${r.purpose||r.to}   |   ${r.from} → ${r.to}   |   ${r.km.toFixed(1)} กม.`;
+        : `${r.purpose||r.to}   |   ${r.from} → ${r.to}   |   ${r.km.toFixed(1)} x ${r.rate} = ${amt.toFixed(2)} ฿`;
 
       children.push(new Paragraph({
         children: [new TextRun({ text: routeText, size: 20, color: '555555' })],

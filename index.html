@@ -216,22 +216,99 @@ let mapsReady = false;
 // ===== currentMonth tracks which month file is loaded =====
 let currentMonth = '';
 
+// ===== Token lifecycle: Google access tokens expire (~1hr). We track the
+// expiry and proactively refresh in the background, and also auto-retry
+// any Drive call that comes back 401 by refreshing once and retrying.
+// This was the root cause of "save doesn't work" after using the app for a
+// while — the token silently expired and nothing ever refreshed it. =====
+let tokenClient = null;
+let tokenExpiresAt = 0;
+let refreshTimer = null;
+let reauthNeeded = false;
+
 // ==================== AUTH ====================
-function signIn() {
-  document.getElementById('login-status').innerHTML = '<span class="spin"></span> กำลัง login...';
-  const client = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: SCOPES,
-    callback: async (resp) => {
-      if (resp.error) {
-        document.getElementById('login-status').textContent = 'Login ไม่สำเร็จ: ' + resp.error;
-        return;
-      }
-      accessToken = resp.access_token;
-      await fetchUserInfo();
-      await showApp();
+function getTokenClient() {
+  if (!tokenClient) {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      callback: () => {} // overwritten per-call below
+    });
+  }
+  return tokenClient;
+}
+
+function scheduleTokenRefresh(expiresInSeconds) {
+  const secs = expiresInSeconds || 3600;
+  tokenExpiresAt = Date.now() + secs * 1000;
+  if (refreshTimer) clearTimeout(refreshTimer);
+  // Refresh 5 minutes before it actually expires (but at least 30s from now)
+  const refreshInMs = Math.max(secs * 1000 - 5 * 60 * 1000, 30 * 1000);
+  refreshTimer = setTimeout(() => { silentRefreshToken(); }, refreshInMs);
+}
+
+// Ask Google for a fresh token without showing the consent screen again
+// (works while the browser still has an active Google session). Returns
+// true if it got a new token, false otherwise.
+function silentRefreshToken() {
+  return new Promise((resolve) => {
+    if (!accessToken) { resolve(false); return; }
+    try {
+      const client = getTokenClient();
+      client.callback = (resp) => {
+        if (resp && resp.access_token) {
+          accessToken = resp.access_token;
+          reauthNeeded = false;
+          scheduleTokenRefresh(resp.expires_in);
+          resolve(true);
+        } else {
+          resolve(false);
+        }
+      };
+      client.requestAccessToken({ prompt: '' });
+    } catch(e) {
+      console.error('silentRefreshToken error:', e);
+      resolve(false);
     }
   });
+}
+
+function showReauthBanner() {
+  reauthNeeded = true;
+  const status = document.getElementById('save-status');
+  if (status) {
+    status.innerHTML = '<span style="color:#e74c3c">เซสชัน Google หมดอายุ — <a href="#" onclick="signIn();return false;" style="color:#e74c3c;text-decoration:underline">กดเพื่อเข้าสู่ระบบใหม่</a></span>';
+  }
+}
+
+// Wrapper around fetch for all Drive/Google API calls: attaches the
+// current access token, and if the server says 401 (expired/invalid
+// token), tries one silent refresh + retry before giving up.
+async function driveFetch(url, options = {}, _retried = false) {
+  const opts = { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${accessToken}` } };
+  const res = await fetch(url, opts);
+  if (res.status === 401 && !_retried) {
+    const refreshed = await silentRefreshToken();
+    if (refreshed) return driveFetch(url, options, true);
+    showReauthBanner();
+  }
+  return res;
+}
+
+function signIn() {
+  document.getElementById('login-status').innerHTML = '<span class="spin"></span> กำลัง login...';
+  const client = getTokenClient();
+  client.callback = async (resp) => {
+    if (resp.error) {
+      document.getElementById('login-status').textContent = 'Login ไม่สำเร็จ: ' + resp.error;
+      return;
+    }
+    accessToken = resp.access_token;
+    reauthNeeded = false;
+    scheduleTokenRefresh(resp.expires_in);
+    await fetchUserInfo();
+    await showApp();
+  };
   client.requestAccessToken();
 }
 
@@ -248,6 +325,8 @@ async function fetchUserInfo() {
 function signOut() {
   google.accounts.oauth2.revoke(accessToken, () => {
     accessToken = ''; rows = []; folderId = null; currentMonth = '';
+    if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+    reauthNeeded = false;
     document.getElementById('app-body').style.display = 'none';
     document.getElementById('login-bar').style.display = 'none';
     document.getElementById('login-screen').style.display = 'flex';
@@ -275,17 +354,16 @@ async function showApp() {
 async function initTravellingFolder() {
   try {
     const q = encodeURIComponent(`name='${DEFAULT_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-    const searchRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+    const searchRes = await driveFetch(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`
     );
     const searchData = await searchRes.json();
     if (searchData.files && searchData.files.length > 0) {
       folderId = searchData.files[0].id;
     } else {
-      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+      const createRes = await driveFetch('https://www.googleapis.com/drive/v3/files', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: DEFAULT_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
       });
       const created = await createRes.json();
@@ -304,15 +382,14 @@ async function pickFolder() {
     return;
   }
   const q = encodeURIComponent(`name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`,
-    { headers: { Authorization: `Bearer ${accessToken}` } });
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
   const data = await res.json();
   if (data.files && data.files.length > 0) {
     folderId = data.files[0].id; folderNameText = data.files[0].name;
   } else {
-    const cr = await fetch('https://www.googleapis.com/drive/v3/files', {
+    const cr = await driveFetch('https://www.googleapis.com/drive/v3/files', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder' })
     });
     const created = await cr.json();
@@ -331,8 +408,7 @@ function getFileName(month, empName) {
 
 async function findFile(name) {
   const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`,
-    { headers: { Authorization: `Bearer ${accessToken}` } });
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
   const data = await res.json();
   return (data.files && data.files.length > 0) ? data.files[0].id : null;
 }
@@ -342,9 +418,8 @@ async function loadMonthChips() {
   if (!folderId) return;
   try {
     const q = encodeURIComponent(`'${folderId}' in parents and mimeType='application/json' and trashed=false and name contains 'travel_'`);
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=name+desc&pageSize=50&fields=files(id,name)`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+    const res = await driveFetch(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=name+desc&pageSize=50&fields=files(id,name)`
     );
     const data = await res.json();
     const chips = document.getElementById('month-chips');
@@ -402,8 +477,7 @@ async function loadMonthData(month) {
   if (!fileId) {
     const [yr, mo] = month.split('-');
     const q = encodeURIComponent(`'${folderId}' in parents and mimeType='application/json' and trashed=false and name contains 'travel_' and name contains '_${yr}_${mo}.json'`);
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`,
-      { headers: { Authorization: `Bearer ${accessToken}` } });
+    const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
     const data = await res.json();
     if (data.files && data.files.length > 0) {
       fileId = data.files[0].id;
@@ -425,8 +499,7 @@ async function loadMonthData(month) {
   }
 
   try {
-    const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
-      { headers: { Authorization: `Bearer ${accessToken}` } });
+    const fileRes = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
     const fileData = await fileRes.json();
 
     document.getElementById('emp').value = fileData.emp || '';
@@ -512,19 +585,34 @@ async function saveData(silent = false) {
       : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
     const method = fileId ? 'PATCH' : 'POST';
 
-    const res = await fetch(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': `multipart/related; boundary=${boundary}`
-      },
-      body: multipartBody
-    });
+    // Abort the request if it hangs (e.g. blocked by network/CORS with no
+    // response at all) instead of leaving the spinner stuck forever.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    let res;
+    try {
+      res = await driveFetch(url, {
+        method,
+        headers: {
+          'Content-Type': `multipart/related; boundary=${boundary}`
+        },
+        body: multipartBody,
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!res.ok) {
       const errText = await res.text();
       console.error('Drive save failed:', res.status, errText);
-      throw new Error('Drive API error ' + res.status);
+      let friendly = `บันทึกไม่สำเร็จ (HTTP ${res.status})`;
+      try {
+        const errJson = JSON.parse(errText);
+        if (errJson.error && errJson.error.message) friendly += ': ' + errJson.error.message;
+      } catch(_) { /* not JSON, ignore */ }
+      throw new Error(friendly);
     }
 
     currentMonth = month;
@@ -535,7 +623,12 @@ async function saveData(silent = false) {
     await loadMonthChips();
   } catch(e) {
     console.error('saveData error:', e);
-    if (!silent) status.innerHTML = '<span style="color:#e74c3c">บันทึกไม่สำเร็จ</span>';
+    if (reauthNeeded) return; // banner already shown by driveFetch/showReauthBanner
+    let msg = (e && e.message) ? e.message : 'บันทึกไม่สำเร็จ';
+    if (e && e.name === 'AbortError') msg = 'บันทึกไม่สำเร็จ: การเชื่อมต่อค้าง (timeout 15 วิ) — เช็คอินเทอร์เน็ต/เครือข่ายบริษัท (บาง network บล็อก googleapis.com)';
+    if (!silent) {
+      status.innerHTML = `<span style="color:#e74c3c" title="${msg.replace(/"/g,'&quot;')}">✗ ${msg}</span>`;
+    }
   }
 }
 
